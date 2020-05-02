@@ -1,0 +1,25 @@
+<configuration debug="true">
+    <!-- include resource="/org/springframework/boot/logging/logback/base.xml"/ -->
+    <appender name="STDOUT" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder>
+            <pattern>%d{HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n
+            </pattern>
+        </encoder>
+    </appender>
+
+    <root level="warn">
+        <appender-ref ref="STDOUT"/>
+    </root>
+
+    <!-- logger name="io.netty" level="debug" />
+    <logger name="io.netty.util.internal" level="info" />
+
+    <logger name="org.springframework" level="debug" />
+    <logger name="org.springframework.test" level="info" />
+    <logger name="org.springframework.boot.autoconfigure.logging" level="info" />
+    <logger name="org.springframework.web" level="trace" />
+    <logger name="org.springframework.http" level="trace" />
+    <logger name="org.springframework.beans" level="info" / -->
+
+    <logger name="com.macasaet" level="debug" />
+</configuration>
