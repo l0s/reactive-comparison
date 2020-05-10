@@ -30,4 +30,14 @@ public class Conversation {
         return id;
     }
 
+    public String toString() {
+        final var builder = new StringBuilder();
+        builder.append("Conversation [id=");
+        builder.append(getId());
+        builder.append(", nextMessageId=");
+        builder.append(getNextMessageId());
+        builder.append("]");
+        return builder.toString();
+    }
+
 }

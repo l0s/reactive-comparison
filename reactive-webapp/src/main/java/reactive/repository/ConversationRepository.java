@@ -10,7 +10,6 @@ import java.io.IOException;
 import java.sql.Connection;
 import java.sql.ResultSet;
 import java.sql.SQLException;
-import java.sql.SQLIntegrityConstraintViolationException;
 import java.time.OffsetDateTime;
 import java.util.Objects;
 import java.util.UUID;
@@ -26,11 +25,14 @@ import com.macasaet.Conversation;
 import com.macasaet.Message;
 import com.macasaet.User;
 
+import io.github.resilience4j.circuitbreaker.annotation.CircuitBreaker;
+import io.github.resilience4j.retry.annotation.Retry;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
-import reactor.core.publisher.SynchronousSink;
-import reactor.util.function.Tuple2;
+import sync.LockFactory;
 
+@CircuitBreaker(name="conversationRepository")
+@Retry(name="conversationRepository")
 @Repository
 public class ConversationRepository {
 
@@ -38,6 +40,8 @@ public class ConversationRepository {
     private static final String findMessagesQuery = "SELECT ts, from_id, body, id FROM Message WHERE conversation_id=? AND id<? ORDER BY id DESC LIMIT ?;";
 
     private final Logger logger = LoggerFactory.getLogger(getClass());
+    private final LockFactory<UUID> lockFactory = new LockFactory<>();
+
     private final DataSource dataSource;
 
     @Autowired
@@ -48,7 +52,7 @@ public class ConversationRepository {
 
     public Flux<Message> findMessages(final Mono<Conversation> conversation, final int limit, final int before) {
         return conversation.flatMapMany(c -> {
-            return Flux.generate(sink -> {
+            return Flux.create(sink -> {
                 try (var connection = getDataSource().getConnection()) {
                     try (var statement = connection.prepareStatement(findMessagesQuery, TYPE_SCROLL_SENSITIVE,
                             CONCUR_READ_ONLY)) {
@@ -63,7 +67,7 @@ public class ConversationRepository {
                                 final var fromId = resultSet.getObject("from_id", UUID.class);
                                 final var body = resultSet.getString("body");
                                 final var id = resultSet.getInt("id");
-                                final var message = new Message(fromId, timestamp, body, id);
+                                final var message = new Message(c.getId(), fromId, timestamp, body, id);
                                 sink.next(message);
                             }
                             sink.complete();
@@ -107,74 +111,116 @@ public class ConversationRepository {
 
     public Mono<Conversation> findOrCreateConversation(final Mono<User> firstParticipant,
             final Mono<User> secondParticipant) {
-        return firstParticipant.zipWith(secondParticipant).handle(this::findOrCreateConversation);
-    }
+        return firstParticipant.zipWith(secondParticipant, (first, second) -> {
+            final var firstParticipantId = first.getId();
+            final var secondParticipantId = second.getId();
 
-    public Mono<Message> findMessage(final Mono<User> sender, final Mono<User> recipient, final int id) {
-        return Mono.create(sink -> {
-            sender.zipWith(recipient).doOnSuccess(tuple -> {
-                final var senderId = tuple.getT1().getId();
-                final var recipientId = tuple.getT2().getId();
-                final var conversationId = senderId.compareTo(recipientId) < 0 ? composeIds(senderId, recipientId)
-                        : composeIds(recipientId, senderId);
-                try (var connection = getDataSource().getConnection()) {
-                    try (var statement = connection.prepareStatement(
-                            "SELECT ts, body FROM Message WHERE conversation_id=? AND id=?;", TYPE_FORWARD_ONLY,
-                            CONCUR_READ_ONLY)) {
-                        statement.setObject(1, conversationId);
-                        statement.setObject(2, id);
-                        try (var resultSet = statement.executeQuery()) {
-                            if (!resultSet.next()) {
-                                sink.success();
-                            }
-                            final var timestamp = resultSet.getObject("ts", OffsetDateTime.class);
-                            final var body = resultSet.getString("body");
-                            final var retval = new Message(senderId, timestamp, body, id);
-                            if (resultSet.next()) {
-                                sink.error(new IllegalStateException(
-                                        "Consistency error: multiple matching messages found"));
-                            }
-                            sink.success(retval);
-                        }
-                    }
-                } catch (final SQLException se) {
-                    logger.error(se.getMessage(), se);
-                    sink.error(se);
-                }
-            });
-        });
+            final var conversationId = firstParticipantId.compareTo(secondParticipantId) < 0
+                    ? composeIds(firstParticipantId, secondParticipantId)
+                    : composeIds(secondParticipantId, firstParticipantId);
 
-    }
-
-    public Mono<Message> createMessage(final Mono<Conversation> conversation, final Mono<Message> message) {
-        return message.handle( ( incoming, sink ) -> {
             try (var connection = getDataSource().getConnection()) {
                 connection.setAutoCommit(false);
-                connection.setTransactionIsolation(Connection.TRANSACTION_SERIALIZABLE);
+                connection.setTransactionIsolation(Connection.TRANSACTION_READ_COMMITTED);
 
-                getAndIncrementMessageId(connection, conversation).doOnSuccess(updatedConversation -> {
-
-                    final var messageId = updatedConversation.getNextMessageId();
-                    incoming.setId(messageId);
-                    try (var statement = connection.prepareStatement(
-                            "INSERT INTO Message ( ts, from_id, body, conversation_id, id ) VALUES ( ?, ?, ?, ?, ? );")) {
-                        statement.setObject(1, incoming.getTimestamp());
-                        statement.setObject(2, incoming.getFromUserId());
-                        statement.setString(3, incoming.getBody());
-                        statement.setObject(4, updatedConversation.getId());
-                        statement.setInt(5, messageId);
-                        final var rowsInserted = statement.executeUpdate();
-                        if (rowsInserted != 1) {
-                            sink.error(new RuntimeException("Expected 1 row to be inserted, but got: " + rowsInserted));
-                        } else {
-                            connection.commit();
-                            sink.next(incoming);
+                final var lock = lockFactory.getLock(conversationId);
+                lock.readLock().lock();
+                try {
+                    try (var findStatement = connection.prepareStatement(selectNextMessageIdQuery)) {
+                        findStatement.setObject(1, conversationId);
+                        try (var resultSet = findStatement.executeQuery()) {
+                            if (resultSet.next()) {
+                                return new Conversation(conversationId, resultSet.getInt(1));
+                            }
                         }
-                    } catch( final SQLException se ) {
-                        logger.error(se.getMessage(), se);
-                        sink.error(se);
                     }
-                }).doOnError(sink::error);
+                } finally {
+                    lock.readLock().unlock();
+                }
+
+                lock.writeLock().lock();
+                try {
+                    // check for the conversation again just in case another thread created
+                    // it after we released the read lock and before we acquired the write
+                    // lock
+                    try (var findStatement = connection.prepareStatement(selectNextMessageIdQuery)) {
+                        findStatement.setObject(1, conversationId);
+                        try (var resultSet = findStatement.executeQuery()) {
+                            if (resultSet.next()) {
+                                return new Conversation(conversationId, resultSet.getInt(1));
+                            }
+                        }
+                    }
+                    final var retval = new Conversation(conversationId, Integer.MIN_VALUE);
+                    try (var insertStatement = connection.prepareStatement(
+                            "INSERT INTO Conversation ( id, next_message_id ) VALUES ( ?, ? );",
+                            ResultSet.TYPE_FORWARD_ONLY, ResultSet.CONCUR_UPDATABLE)) {
+                        insertStatement.setObject(1, retval.getId());
+                        insertStatement.setInt(2, retval.getNextMessageId());
+
+                        final var rowsUpdated = insertStatement.executeUpdate();
+                        if (rowsUpdated < 0 || rowsUpdated > 1) {
+                            connection.rollback();
+                            throw new IllegalStateException(
+                                    "consistency error: expected either 0 or 1 conversations inserted");
+                        }
+                        try (var relateStatement = connection.prepareStatement(
+                                "INSERT INTO Conversation_Participant ( conversation_id, user_id ) VALUES ( ?, ? );",
+                                ResultSet.TYPE_FORWARD_ONLY, ResultSet.CONCUR_UPDATABLE)) {
+                            relateStatement.setObject(1, conversationId);
+                            relateStatement.setObject(2, firstParticipantId);
+                            relateStatement.addBatch();
+                            relateStatement.setObject(1, conversationId);
+                            relateStatement.setObject(2, secondParticipantId);
+                            relateStatement.addBatch();
+                            final var batchResult = relateStatement.executeBatch();
+                            if (batchResult.length != 2 && batchResult[0] != 1 && batchResult[1] != 1) {
+                                connection.rollback();
+                                throw new RuntimeException(
+                                        "consistency error: multiple conversation participants created");
+                            }
+                        }
+                        connection.commit();
+                    }
+                    return retval;
+                } finally {
+                    lock.writeLock().unlock();
+                }
+            } catch (final SQLException se) {
+                final var message = "Error obtaining conversation between " + firstParticipantId + " and "
+                        + firstParticipantId + ": " + se.getMessage();
+                logger.error(message, se);
+                throw new RuntimeException(message, se);
+            }
+        });
+    }
+
+    public Mono<Message> findMessage(final UUID conversationId, final int messageId) {
+        return Mono.create(sink -> {
+            try (var connection = getDataSource().getConnection()) {
+                connection.setReadOnly(true);
+                try (var statement = connection.prepareStatement(
+                        "SELECT ts, from_id, body FROM Message WHERE conversation_id=? AND id=?;",
+                        ResultSet.TYPE_FORWARD_ONLY, ResultSet.CONCUR_READ_ONLY)) {
+                    statement.setObject(1, conversationId);
+                    statement.setInt(2, messageId);
+                    try (var resultSet = statement.executeQuery()) {
+                        if (!resultSet.next()) {
+                            logger.debug("No message found for conversation {} and id {}", conversationId, messageId);
+                            sink.success();
+                        }
+                        final var timestamp = resultSet.getObject(1, OffsetDateTime.class);
+                        final UUID fromUserId = resultSet.getObject(2, UUID.class);
+                        final String body = resultSet.getString(3);
+                        final var retval = new Message(conversationId, fromUserId, timestamp, body, messageId);
+                        if (resultSet.next()) {
+                            sink.error(
+                                    new IllegalStateException("Consistency error, multiple messages with primary key: "
+                                            + conversationId + ":" + messageId));
+                        }
+                        sink.success(retval);
+                    }
+                }
             } catch (final SQLException se) {
                 logger.error(se.getMessage(), se);
                 sink.error(se);
@@ -182,113 +228,97 @@ public class ConversationRepository {
         });
     }
 
-    protected void findOrCreateConversation(final Tuple2<User, User> participants,
-            final SynchronousSink<Conversation> sink) {
-        final var firstParticipantId = participants.getT1().getId();
-        final var secondParticipantId = participants.getT2().getId();
+    public Mono<Message> findMessage(final Mono<User> sender, final Mono<User> recipient, final int id) {
+        return sender.zipWith(recipient).map(tuple -> {
+            final var senderId = tuple.getT1().getId();
+            final var recipientId = tuple.getT2().getId();
+            return senderId.compareTo(recipientId) < 0
+                ? composeIds(senderId, recipientId)
+                : composeIds(recipientId, senderId);
+        })
+        .flatMap(compositeId -> findMessage(compositeId, id));
+    }
 
-        final var compositeId = firstParticipantId.compareTo(secondParticipantId) < 0
-                ? composeIds(firstParticipantId, secondParticipantId)
-                : composeIds(secondParticipantId, firstParticipantId);
-        try (var connection = getDataSource().getConnection()) {
-            connection.setAutoCommit(false);
-            connection.setTransactionIsolation(Connection.TRANSACTION_SERIALIZABLE);
-            try (var insertStatement = connection.prepareStatement(
-                    "INSERT INTO Conversation ( id, next_message_id ) VALUES ( ?, ? );", ResultSet.TYPE_FORWARD_ONLY,
-                    ResultSet.CONCUR_UPDATABLE)) {
-                insertStatement.setObject(1, compositeId);
-                insertStatement.setInt(2, Integer.MIN_VALUE);
-                try {
-                    final var rowsUpdated = insertStatement.executeUpdate();
-                    if (rowsUpdated == 1) {
-                        for (final var id : new UUID[] { firstParticipantId, secondParticipantId }) {
-                            insertRelation(compositeId, connection, id);
-                        }
-                        connection.commit();
-                    } else if (rowsUpdated < 0 || rowsUpdated > 1) {
+    public Mono<Message> createMessage(final Mono<Conversation> conversation, final Mono<Message> message) {
+        return conversation.zipWith(message, (conversationToUpdate, messageToUpdate) -> {
+            try (var connection = getDataSource().getConnection()) {
+                connection.setAutoCommit(false);
+                connection.setTransactionIsolation(Connection.TRANSACTION_REPEATABLE_READ);
+
+                final var updatedConversation = getAndIncrementMessageId(connection, conversationToUpdate);
+
+                final var messageId = updatedConversation.getNextMessageId();
+                messageToUpdate.setId(messageId);
+                try (var statement = connection.prepareStatement(
+                        "INSERT INTO Message ( ts, from_id, body, conversation_id, id ) VALUES ( ?, ?, ?, ?, ? );")) {
+                    statement.setObject(1, messageToUpdate.getTimestamp());
+                    statement.setObject(2, messageToUpdate.getFromUserId());
+                    statement.setString(3, messageToUpdate.getBody());
+                    statement.setObject(4, updatedConversation.getId());
+                    statement.setInt(5, messageId);
+                    final var rowsInserted = statement.executeUpdate();
+                    if (rowsInserted != 1) {
                         connection.rollback();
-                        sink.error(new IllegalStateException(
-                                "consistency error: expected either 0 or 1 conversations inserted"));
-                        return;
+                        throw new RuntimeException("Expected 1 row to be inserted, but got: " + rowsInserted);
+                    } else {
+                        connection.commit();
+                        return messageToUpdate;
                     }
-                } catch (final SQLIntegrityConstraintViolationException sicve) {
-                    // FIXME maybe should leverage transaction instead
-                    logger.debug("Conversation already exists: " + sicve.getMessage(), sicve);
                 }
-                findConversation(connection, compositeId, sink);
+            } catch (final SQLException se) {
+                logger.error(se.getMessage(), se);
+                throw new RuntimeException(se.getMessage(), se);
             }
-        } catch (final SQLException se) {
-            logger.error(se.getMessage(), se);
-            sink.error(se);
-        }
+        });
     }
 
-    protected void insertRelation(final UUID compositeId, Connection connection, final UUID participantId) throws SQLException {
-        try (var relateStatement = connection.prepareStatement(
-                "INSERT INTO Conversation_Participant ( conversation_id, user_id ) VALUES ( ?, ? );",
-                ResultSet.TYPE_FORWARD_ONLY, ResultSet.CONCUR_UPDATABLE)) {
-            relateStatement.setObject(1, compositeId);
-            relateStatement.setObject(2, participantId);
-            final var rowsInserted = relateStatement.executeUpdate();
-            if( rowsInserted != 1 ) {
-                connection.rollback();
-                throw new RuntimeException("consistency error: multiple conversation participants created");
-            }
-        }
-    }
-
-    protected Mono<Conversation> getAndIncrementMessageId(final Connection connection,
-            final Mono<Conversation> conversation) {
-        return conversation.handle((incoming, sink) -> {
+    protected Conversation getAndIncrementMessageId(final Connection connection, final Conversation conversation) throws SQLException {
+        final var lock = lockFactory.getLock(conversation.getId());
+        lock.writeLock().lock();
+        try {
             try (var statement = connection.prepareStatement("SELECT id, next_message_id FROM Conversation WHERE id=?;",
                     ResultSet.TYPE_FORWARD_ONLY, ResultSet.CONCUR_UPDATABLE)) {
-                statement.setObject(1, incoming.getId());
+                statement.setObject(1, conversation.getId());
                 try (var resultSet = statement.executeQuery()) {
                     if (!resultSet.next()) {
-                        sink.error(new IllegalArgumentException("Conversation not found: " + incoming.getId()));
-                        return;
+                        throw new IllegalArgumentException("Conversation not found: " + conversation.getId());
                     }
                     final var retval = resultSet.getInt("next_message_id");
                     final int nextMessageId = retval + 1;
                     resultSet.updateInt("next_message_id", nextMessageId);
                     resultSet.updateRow();
                     if (resultSet.next()) {
-                        sink.error(
-                                new IllegalStateException("Multiple conversations found with id: " + incoming.getId()));
-                        return;
+                        throw new IllegalStateException(
+                                "Multiple conversations found with id: " + conversation.getId());
                     }
-                    incoming.setNextMessageId(nextMessageId);
+                    conversation.setNextMessageId(nextMessageId);
                     // release lock so other processes can query the table, may create holes
                     // in the sequence if subsequent commands fail
                     connection.commit();
-                    sink.next(incoming);
+                    return conversation;
                 }
-            } catch (final SQLException se) {
-                logger.error(se.getMessage(), se);
-                sink.error(se);
             }
-        });
+        } finally {
+            lock.writeLock().unlock();
+        }
     }
 
-    protected void findConversation(final Connection connection, final UUID compositeId,
-            final SynchronousSink<Conversation> sink) throws SQLException {
+    protected Conversation findConversation(final Connection connection, final UUID compositeId) throws SQLException {
         try (var selectQuery = connection.prepareStatement(selectNextMessageIdQuery, ResultSet.TYPE_FORWARD_ONLY,
                 ResultSet.CONCUR_READ_ONLY)) {
             selectQuery.setObject(1, compositeId);
             try (var resultSet = selectQuery.executeQuery()) {
                 if (!resultSet.next()) {
                     connection.rollback();
-                    sink.error(new IllegalArgumentException("consistency error: Conversation should already exist"));
-                    return;
+                    throw new IllegalArgumentException("consistency error: Conversation should already exist");
                 }
                 final var nextMessageId = resultSet.getInt("next_message_id");
                 final var retval = new Conversation(compositeId, nextMessageId);
                 if (resultSet.next()) {
                     connection.rollback();
-                    sink.error(new IllegalStateException("consistency error: multiple conversations with same id"));
-                    return;
+                    throw new IllegalStateException("consistency error: multiple conversations with same id");
                 }
-                sink.next(retval);
+                return retval;
             }
         }
     }

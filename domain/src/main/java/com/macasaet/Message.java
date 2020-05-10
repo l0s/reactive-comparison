@@ -8,23 +8,28 @@ public class Message {
 
     private final UUID fromUserId;
     private final OffsetDateTime timestamp;
+    private final UUID conversationId;
     private String body;
     private int id;
 
-    public Message(final UUID fromUserId, final OffsetDateTime timestamp) {
+    public Message(final UUID conversationId, final UUID fromUserId, final OffsetDateTime timestamp) {
         Objects.requireNonNull(fromUserId);
         Objects.requireNonNull(timestamp);
+        Objects.requireNonNull(conversationId);
         this.fromUserId = fromUserId;
         this.timestamp = timestamp;
+        this.conversationId = conversationId;
     }
 
-    public Message(final UUID fromUserId, final OffsetDateTime timestamp, final String body) {
-        this(fromUserId, timestamp);
+    public Message(final UUID conversationId, final UUID fromUserId, final OffsetDateTime timestamp,
+            final String body) {
+        this(conversationId, fromUserId, timestamp);
         setBody(body);
     }
 
-    public Message(final UUID fromUserId, final OffsetDateTime timestamp, final String body, final int id) {
-        this(fromUserId, timestamp, body);
+    public Message(final UUID conversationId, final UUID fromUserId, final OffsetDateTime timestamp, final String body,
+            final int id) {
+        this(conversationId, fromUserId, timestamp, body);
         setId(id);
     }
 
@@ -55,7 +60,9 @@ public class Message {
 
     public String toString() {
         final var builder = new StringBuilder();
-        builder.append("Message [fromUserId=");
+        builder.append("Message [conversationId=");
+        builder.append(getConversationId());
+        builder.append(", fromUserId=");
         builder.append(getFromUserId());
         builder.append(", timestamp=");
         builder.append(getTimestamp());
@@ -63,6 +70,10 @@ public class Message {
         builder.append(getId());
         builder.append("]");
         return builder.toString();
+    }
+
+    public UUID getConversationId() {
+        return conversationId;
     }
 
 }

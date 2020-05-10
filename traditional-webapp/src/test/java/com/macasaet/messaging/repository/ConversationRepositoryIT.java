@@ -235,7 +235,8 @@ public class ConversationRepositoryIT {
         // given
         final var user = new User(UUID.randomUUID(), "user");
         final var conversation = new Conversation(UUID.randomUUID(), 31);
-        final var message = new Message(user.getId(), OffsetDateTime.now(), RandomString.make(8192));
+        final var message = new Message(conversation.getId(), user.getId(), OffsetDateTime.now(),
+                RandomString.make(8192));
 
         try (var connection = dataSource.getConnection()) {
             // insert conversation

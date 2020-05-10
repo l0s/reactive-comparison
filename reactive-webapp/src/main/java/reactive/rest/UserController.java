@@ -7,8 +7,6 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.ResponseEntity;
@@ -27,14 +25,11 @@ import com.macasaet.User;
 import reactive.repository.UserRepository;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
-import reactor.util.Loggers;
 
 @RestController
 @RequestMapping("/users")
 public class UserController {
 
-    private final Logger logger = LoggerFactory.getLogger(getClass());
-    private final reactor.util.Logger reactorLogger = Loggers.getLogger(getClass());
     private final UserRepository repository;
 
     private ConversationsController conversationsController;
@@ -47,13 +42,12 @@ public class UserController {
 
     @GetMapping("/{id}")
     public Mono<User> getUser(@PathVariable final String id) {
-        return repository.findById(UUID.fromString(id)).log(reactorLogger);
+        return repository.findById(UUID.fromString(id));
     }
 
     @GetMapping("/")
     public ResponseEntity<Flux<User>> getUsers(@RequestParam(defaultValue = "0") final int pageNumber,
             @RequestParam(defaultValue = "8") final int pageSize, @RequestHeader final HttpHeaders requestHeaders) {
-        logger.debug("-- getUsers( pageNumber: {}, pageSize: {} )", pageNumber, pageSize);
         if (pageNumber < 0) {
             return ResponseEntity.badRequest().build();
         }
@@ -62,7 +56,7 @@ public class UserController {
             return getUsers(pageNumber, 16, requestHeaders);
         }
         final var builder = ResponseEntity.ok();
-        final var flux = repository.findAll(pageNumber, pageSize).cache().log(reactorLogger);
+        final var flux = repository.findAll(pageNumber, pageSize).cache();
         flux.count().subscribe(count -> {
          // FIXME properly construct base url
             final var host = requestHeaders.getHost();
@@ -122,4 +116,5 @@ public class UserController {
         Objects.requireNonNull(conversationsController);
         this.conversationsController = conversationsController;
     }
+
 }

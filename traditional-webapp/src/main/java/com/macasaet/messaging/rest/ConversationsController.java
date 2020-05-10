@@ -1,7 +1,7 @@
 package com.macasaet.messaging.rest;
 
-import static org.springframework.hateoas.server.mvc.WebMvcLinkBuilder.linkTo;
-import static org.springframework.hateoas.server.mvc.WebMvcLinkBuilder.methodOn;
+import static org.springframework.hateoas.server.reactive.WebFluxLinkBuilder.linkTo;
+import static org.springframework.hateoas.server.reactive.WebFluxLinkBuilder.methodOn;
 
 import java.nio.charset.Charset;
 import java.time.Clock;
@@ -62,7 +62,7 @@ public class ConversationsController {
         }
         final var dto = new ConversationDto();
         dto.setId(conversation.getId().toString());
-        dto.add(linkTo(methodOn(getClass()).getMessages(conversationId, null, null)).withRel("messages"));
+        dto.add(linkTo(methodOn(getClass()).getMessages(conversationId, null, null)).withRel("messages").toMono().toFuture().join());
         return ResponseEntity.ok(dto);
     }
 
@@ -76,6 +76,15 @@ public class ConversationsController {
         public void setId(final String id) {
             this.id = id;
         }
+    }
+
+    @GetMapping("/{conversationId}/messages/{id}")
+    public ResponseEntity<Message> getMessage(@PathVariable final String conversationId,
+            @PathVariable final int id) {
+        // TODO DTO
+        // TODO link to conversation
+        final var message = getRepository().findMessage(UUID.fromString(conversationId), id);
+        return ResponseEntity.ok(message);
     }
 
     @GetMapping("/{conversationId}/messages")
@@ -106,14 +115,14 @@ public class ConversationsController {
             if (first.getId() > Integer.MIN_VALUE) {
                 // there *may* be a previous page
                 dto.add(linkTo(methodOn(ConversationsController.class).getMessages(conversationId, limit,
-                        createCursor(first.getId() - 1))).withRel("previous"));
+                        createCursor(first.getId() - 1))).withRel("previous").toMono().toFuture().join());
             }
         }
         if (messageIndex >= conversation.getNextMessageId()) {
             dto.add(linkTo(methodOn(ConversationsController.class).getMessages(conversationId, limit,
-                    createCursor(messageIndex + limit))).withRel("next"));
+                    createCursor(messageIndex + limit))).withRel("next").toMono().toFuture().join());
         }
-        dto.add(linkTo(methodOn(getClass()).getConversation(conversationId)).withRel("conversation"));
+        dto.add(linkTo(methodOn(getClass()).getConversation(conversationId)).withRel("conversation").toMono().toFuture().join());
         return ResponseEntity.ok(dto);
     }
 
@@ -136,13 +145,10 @@ public class ConversationsController {
         final Conversation conversation = getRepository().findOrCreateConversation(sender, recipient);
 
         // in the future, we can use the sender's time zone
-        final var message = new Message(UUID.fromString(fromId), OffsetDateTime.now(getClock()), body);
-        // FIXME perhaps the repository should take the individual parameters
-        // and return the domain object
-        // FIXME perhaps the repository should take a user
-        getRepository().createMessage(conversation, message);
-        final var link = linkTo(methodOn(UserController.class).getDirectMessage(fromId, toId, message.getId()))
-                .withRel("self");
+        var message = new Message(conversation.getId(), UUID.fromString(fromId), OffsetDateTime.now(getClock()), body);
+        message = getRepository().createMessage(conversation, message);
+        final var link = linkTo(methodOn(getClass()).getMessage(conversation.getId().toString(), message.getId()))
+                .withRel("self").toMono().toFuture().join();
         return ResponseEntity.created(link.toUri()).build();
     }
 

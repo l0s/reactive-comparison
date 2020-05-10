@@ -17,12 +17,17 @@ import org.springframework.stereotype.Repository;
 
 import com.macasaet.User;
 
+import io.github.resilience4j.circuitbreaker.annotation.CircuitBreaker;
+import io.github.resilience4j.retry.annotation.Retry;
+
+@CircuitBreaker(name = "userRepository")
+@Retry(name="userRepository")
 @Repository
 public class UserRepository {
 
-    static final String selectAllTemplate = "SELECT id, name FROM User LIMIT ? OFFSET ?;";
-    static final String selectByIdTemplate = "SELECT id, name FROM User WHERE id=?;";
-    static final String insertionTemplate = "INSERT INTO User( id, name ) values( ?, ? );";
+    static final String selectAllTemplate = "SELECT id, name FROM \"User\" LIMIT ? OFFSET ?;";
+    static final String selectByIdTemplate = "SELECT id, name FROM \"User\" WHERE id=?;";
+    static final String insertionTemplate = "INSERT INTO \"User\"( id, name ) values( ?, ? );";
 
     private final Logger logger = LoggerFactory.getLogger(getClass());
 
@@ -30,7 +35,6 @@ public class UserRepository {
 
     @Autowired
     public UserRepository(final DataSource dataSource) {
-        logger.debug("-- UserRepository( {} )", dataSource);
         Objects.requireNonNull(dataSource);
         this.dataSource = dataSource;
     }
@@ -39,7 +43,7 @@ public class UserRepository {
         try {
             try (var connection = getDataSource().getConnection()) {
                 try (var statement = connection.prepareStatement(insertionTemplate)) {
-                    statement.setString(1, user.getId().toString());
+                    statement.setObject(1, user.getId());
                     statement.setString(2, user.getName());
                     statement.executeUpdate();
                 }
@@ -55,7 +59,7 @@ public class UserRepository {
             // thread blocks while connection is retrieved from the pool
             try (var connection = getDataSource().getConnection()) {
                 try (var statement = connection.prepareStatement(selectByIdTemplate, ResultSet.TYPE_FORWARD_ONLY, ResultSet.CONCUR_READ_ONLY)) {
-                    statement.setString(1, id.toString());
+                    statement.setObject(1, id);
                     // thread blocks while query is executed
                     try (var resultSet = statement.executeQuery()) {
                         var hasFirstRow = resultSet.next();

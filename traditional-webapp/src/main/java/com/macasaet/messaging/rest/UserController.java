@@ -53,7 +53,6 @@ public class UserController {
     @GetMapping("/")
     public ResponseEntity<List<User>> getUsers(@RequestParam(defaultValue = "0") final int pageNumber,
             @RequestParam(defaultValue = "8") final int pageSize, @RequestHeader final HttpHeaders requestHeaders) {
-        logger.debug("-- getUsers( pageNumber: {}, pageSize: {} )", pageNumber, pageSize);
         if (pageNumber < 0) {
             return ResponseEntity.badRequest().build();
         }
@@ -87,13 +86,6 @@ public class UserController {
             @RequestHeader final HttpHeaders requestHeaders) {
         final User user = new User(userDto.get("name"));
         repository.createUser(user);
-//        try {
-//            
-//            final var host = requestHeaders.getHost();
-//            final var portString = host.getPort() == 80 ? "" : ":" + host.getPort();
-//            // FIXME programmatically determine scheme / protocol
-//            final var baseUrl = "http" + "://" + host.getHostString() + portString + "/users/";
-//            return ResponseEntity.created(new URI(baseUrl + user.getId().toString())).build();
         final var webfluxLink = linkTo(methodOn(getClass()).getUser(user.getId().toString())).withRel("self");
         final var mono = webfluxLink.toMono();
         final var future = mono.toFuture();
@@ -106,9 +98,6 @@ public class UserController {
             logger.error(e.getMessage(), e);
             throw new RuntimeException(e.getMessage(), e);
         }
-//        } catch (final URISyntaxException e) {
-//            throw new RuntimeException(e.getMessage(), e);
-//        }
     }
 
     @PostMapping("/{senderId}/messages/outgoing/{recipientId}")

@@ -14,15 +14,19 @@ import org.springframework.stereotype.Repository;
 
 import com.macasaet.User;
 
+import io.github.resilience4j.circuitbreaker.annotation.CircuitBreaker;
+import io.github.resilience4j.retry.annotation.Retry;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
+@CircuitBreaker(name="userRepository")
+@Retry(name="userRepository")
 @Repository
 public class UserRepository {
 
-    private static final String selectAllTemplate = "SELECT id, name FROM User LIMIT ? OFFSET ?;";
-    private static final String selectByIdTemplate = "SELECT id, name FROM User WHERE id=?;";
-    private static final String insertionTemplate = "INSERT INTO User( id, name ) values( ?, ? );";
+    private static final String selectAllTemplate = "SELECT id, name FROM \"User\" LIMIT ? OFFSET ?;";
+    private static final String selectByIdTemplate = "SELECT id, name FROM \"User\" WHERE id=?;";
+    private static final String insertionTemplate = "INSERT INTO \"User\"( id, name ) values( ?, ? );";
 
     private final Logger logger = LoggerFactory.getLogger(getClass());
 
@@ -42,7 +46,7 @@ public class UserRepository {
         try {
             try (var connection = getDataSource().getConnection()) {
                 try (var statement = connection.prepareStatement(insertionTemplate)) {
-                    statement.setString(1, user.getId().toString());
+                    statement.setObject(1, user.getId());
                     statement.setString(2, user.getName());
                     statement.executeUpdate();
                 }
@@ -57,11 +61,13 @@ public class UserRepository {
         return Mono.create(sink -> {
             try {
                 try (var connection = getDataSource().getConnection()) {
-                    try (var statement = connection.prepareStatement(selectByIdTemplate, ResultSet.TYPE_FORWARD_ONLY, ResultSet.CONCUR_READ_ONLY)) {
-                        statement.setString(1, id.toString());
+                    try (var statement = connection.prepareStatement(selectByIdTemplate, ResultSet.TYPE_FORWARD_ONLY,
+                            ResultSet.CONCUR_READ_ONLY)) {
+                        statement.setObject(1, id);
                         try (var resultSet = statement.executeQuery()) {
                             var hasFirstRow = resultSet.next();
                             if (!hasFirstRow) {
+                                logger.error("No user found with id: {}", id);
                                 sink.success();
                                 return;
                             }
@@ -84,7 +90,6 @@ public class UserRepository {
     }
 
     public Flux<User> findAll(final int pageNumber, final int pageSize) {
-        logger.debug("-- findUser( pageNumber: {}, pageSize: {} )", pageNumber, pageSize);
         final var offset = pageSize * pageNumber;
         return Flux.create(sink -> {
             try (var connection = getDataSource().getConnection()) {
