@@ -1,13 +1,13 @@
-package reactive;
+package blocking;
 
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 
 @SpringBootApplication(scanBasePackageClasses = ApplicationConfiguration.class)
-public class ReactiveDemoApplication {
+public class BlockingDemoApplication {
 
-	public static void main(final String[] args) {
-		SpringApplication.run(ReactiveDemoApplication.class, args);
-	}
+    public static void main(final String[] args) {
+        SpringApplication.run(BlockingDemoApplication.class, args);
+    }
 
 }

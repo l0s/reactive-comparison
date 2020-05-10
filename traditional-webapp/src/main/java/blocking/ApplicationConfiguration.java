@@ -1,4 +1,4 @@
-package com.macasaet.messaging;
+package blocking;
 
 import java.time.Clock;
 
@@ -8,12 +8,12 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Import;
 import org.springframework.web.server.adapter.ForwardedHeaderTransformer;
 
-import com.macasaet.jdbc.config.JdbcConfiguration;
+import jdbc.config.JdbcConfiguration;
 
 @Configuration
 @Import(value = {JdbcConfiguration.class})
-@ComponentScan({"com.macasaet.messaging"})
-public class SpringConfiguration {
+@ComponentScan({"blocking"})
+public class ApplicationConfiguration {
 
     @Bean
     public Clock clock() {

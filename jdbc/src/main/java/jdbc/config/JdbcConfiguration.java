@@ -1,4 +1,4 @@
-package com.macasaet.jdbc.config;
+package jdbc.config;
 
 import javax.sql.DataSource;
 

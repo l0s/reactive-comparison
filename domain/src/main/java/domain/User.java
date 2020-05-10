@@ -1,4 +1,4 @@
-package com.macasaet;
+package domain;
 
 import java.util.UUID;
 

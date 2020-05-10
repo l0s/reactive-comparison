@@ -1,4 +1,4 @@
-package com.macasaet.messaging.repository;
+package blocking.repository;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -18,10 +18,9 @@ import org.junit.jupiter.api.Test;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import com.macasaet.Conversation;
-import com.macasaet.Message;
-import com.macasaet.User;
-
+import domain.Conversation;
+import domain.Message;
+import domain.User;
 import net.bytebuddy.utility.RandomString;
 
 public class ConversationRepositoryIT {

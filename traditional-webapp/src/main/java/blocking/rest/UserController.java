@@ -1,4 +1,4 @@
-package com.macasaet.messaging.rest;
+package blocking.rest;
 
 import static org.springframework.hateoas.server.reactive.WebFluxLinkBuilder.linkTo;
 import static org.springframework.hateoas.server.reactive.WebFluxLinkBuilder.methodOn;
@@ -26,9 +26,9 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
-import com.macasaet.Message;
-import com.macasaet.User;
-import com.macasaet.messaging.repository.UserRepository;
+import blocking.repository.UserRepository;
+import domain.Message;
+import domain.User;
 
 @RestController
 @RequestMapping("/users")

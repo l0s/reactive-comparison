@@ -1,4 +1,4 @@
-package com.macasaet.messaging.repository;
+package blocking.repository;
 
 import static java.sql.ResultSet.CONCUR_READ_ONLY;
 import static java.sql.ResultSet.TYPE_FORWARD_ONLY;
@@ -23,10 +23,9 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Repository;
 
-import com.macasaet.Conversation;
-import com.macasaet.Message;
-import com.macasaet.User;
-
+import domain.Conversation;
+import domain.Message;
+import domain.User;
 import io.github.resilience4j.circuitbreaker.annotation.CircuitBreaker;
 import io.github.resilience4j.retry.annotation.Retry;
 import sync.LockFactory;

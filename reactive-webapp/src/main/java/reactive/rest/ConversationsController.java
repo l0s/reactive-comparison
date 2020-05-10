@@ -29,9 +29,8 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
-import com.macasaet.Conversation;
-import com.macasaet.Message;
-
+import domain.Conversation;
+import domain.Message;
 import reactive.repository.ConversationRepository;
 import reactive.repository.UserRepository;
 import reactor.core.publisher.Mono;

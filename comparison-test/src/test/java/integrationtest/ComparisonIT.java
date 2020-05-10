@@ -1,4 +1,4 @@
-package com.macasaet.messaging;
+package integrationtest;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -34,7 +34,6 @@ import java.util.stream.IntStream;
 import java.util.stream.Stream;
 
 import org.junit.jupiter.api.AfterAll;
-import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DynamicNode;
 import org.junit.jupiter.api.TestFactory;
 import org.junit.jupiter.api.TestReporter;
@@ -49,9 +48,9 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
+import blocking.BlockingDemoApplication;
 import net.bytebuddy.utility.RandomString;
 import reactive.ReactiveDemoApplication;
-//import reactor.tools.agent.ReactorDebugAgent;
 
 @Testcontainers
 @Execution(ExecutionMode.SAME_THREAD)
@@ -63,11 +62,6 @@ public class ComparisonIT {
     private final int messageCount = 4096;
 //    private final int userCount = 2;
 //    private final int messageCount = 4;
-
-    @BeforeAll
-    public static void setUp() {
-//        ReactorDebugAgent.init();
-    }
 
     @AfterAll
     public static void reportTiming(final TestReporter reporter) {
@@ -93,7 +87,7 @@ public class ComparisonIT {
     protected static enum Paradigm {
 
         REACTIVE(ReactiveDemoApplication.class),
-        BLOCKING(Application.class);
+        BLOCKING(BlockingDemoApplication.class);
 
         private final Map<TimingMetric, Collection<Duration>> durations = new ConcurrentHashMap<>();
         private final Class<?> mainClass;
