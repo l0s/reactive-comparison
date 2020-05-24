@@ -57,7 +57,7 @@ public class UserController {
         final var builder = ResponseEntity.ok();
         final var flux = repository.findAll(pageNumber, pageSize).cache();
         flux.count().subscribe(count -> {
-         // FIXME properly construct base url
+            // FIXME properly construct base url
             final var host = requestHeaders.getHost();
             final var portString = host.getPort() == 80 ? "" : ":" + host.getPort();
             // FIXME programmatically determine scheme / protocol

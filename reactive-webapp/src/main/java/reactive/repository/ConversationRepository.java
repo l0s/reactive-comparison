@@ -19,6 +19,7 @@ import javax.sql.DataSource;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Repository;
 
 import domain.Conversation;
@@ -28,6 +29,7 @@ import io.github.resilience4j.circuitbreaker.annotation.CircuitBreaker;
 import io.github.resilience4j.retry.annotation.Retry;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
+import reactor.core.scheduler.Scheduler;
 import sync.LockFactory;
 
 @CircuitBreaker(name="conversationRepository")
@@ -42,15 +44,18 @@ public class ConversationRepository {
     private final LockFactory<UUID> lockFactory = new LockFactory<>();
 
     private final DataSource dataSource;
+    private final Scheduler scheduler;
 
     @Autowired
-    public ConversationRepository(final DataSource dataSource) {
+    public ConversationRepository(final DataSource dataSource, @Qualifier("databaseScheduler") final Scheduler scheduler) {
         Objects.requireNonNull(dataSource);
+        Objects.requireNonNull(scheduler);
         this.dataSource = dataSource;
+        this.scheduler = scheduler;
     }
 
     public Flux<Message> findMessages(final Mono<Conversation> conversation, final int limit, final int before) {
-        return conversation.flatMapMany(c -> {
+        final Flux<Message> flux = conversation.publishOn(getScheduler()).flatMapMany(c -> {
             return Flux.create(sink -> {
                 try (var connection = getDataSource().getConnection()) {
                     try (var statement = connection.prepareStatement(findMessagesQuery, TYPE_SCROLL_SENSITIVE,
@@ -78,10 +83,11 @@ public class ConversationRepository {
                 }
             });
         });
+        return flux.publishOn(getScheduler());
     }
 
     public Mono<Conversation> findConversation(final UUID id) {
-        return Mono.create(sink -> {
+        final Mono<Conversation> mono = Mono.create(sink -> {
             try (var connection = getDataSource().getConnection()) {
                 try (var statement = connection.prepareStatement(selectNextMessageIdQuery, TYPE_FORWARD_ONLY,
                         CONCUR_READ_ONLY)) {
@@ -106,6 +112,7 @@ public class ConversationRepository {
                 sink.error(e);
             }
         });
+        return mono.publishOn(getScheduler());
     }
 
     public Mono<Conversation> findOrCreateConversation(final Mono<User> firstParticipant,
@@ -191,11 +198,12 @@ public class ConversationRepository {
                 logger.error(message, se);
                 throw new RuntimeException(message, se);
             }
-        });
+        })
+        .publishOn(getScheduler());
     }
 
     public Mono<Message> findMessage(final UUID conversationId, final int messageId) {
-        return Mono.create(sink -> {
+        final Mono<Message> mono = Mono.create(sink -> {
             try (var connection = getDataSource().getConnection()) {
                 connection.setReadOnly(true);
                 try (var statement = connection.prepareStatement(
@@ -225,6 +233,7 @@ public class ConversationRepository {
                 sink.error(se);
             }
         });
+        return mono.publishOn(getScheduler());
     }
 
     public Mono<Message> findMessage(final Mono<User> sender, final Mono<User> recipient, final int id) {
@@ -235,7 +244,8 @@ public class ConversationRepository {
                 ? composeIds(senderId, recipientId)
                 : composeIds(recipientId, senderId);
         })
-        .flatMap(compositeId -> findMessage(compositeId, id));
+        .flatMap(compositeId -> findMessage(compositeId, id))
+        .publishOn(getScheduler());
     }
 
     public Mono<Message> createMessage(final Mono<Conversation> conversation, final Mono<Message> message) {
@@ -268,7 +278,7 @@ public class ConversationRepository {
                 logger.error(se.getMessage(), se);
                 throw new RuntimeException(se.getMessage(), se);
             }
-        });
+        }).publishOn(getScheduler());
     }
 
     protected Conversation getAndIncrementMessageId(final Connection connection, final Conversation conversation) throws SQLException {
@@ -339,6 +349,10 @@ public class ConversationRepository {
 
     protected DataSource getDataSource() {
         return dataSource;
+    }
+
+    protected Scheduler getScheduler() {
+        return scheduler;
     }
 
 }

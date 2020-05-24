@@ -9,9 +9,18 @@ import java.util.concurrent.locks.ReentrantReadWriteLock;
 import java.util.function.Function;
 
 /**
- * FIXME move to common utils
- *
- * @param <T>
+ * <p>A factory for generating {@link ReadWriteLock ReadWriteLocks} based
+ * on an "identifiable" object. If two objects are "equal" and two
+ * threads hold a lock for the object at the same time, then the two
+ * threads are guaranteed to have the same lock instance.</p>
+ * 
+ * <p>FIXME move to common utils</p>
+ * 
+ * <p>Inspired by XSync: https://github.com/antkorwin/xsync/</p>
+ * 
+ * @see https://dzone.com/articles/synchronized-by-the-value-of-the-object-in-java
+ * @see https://github.com/antkorwin/xsync/
+ * @param <T> a type with a well-defined equality contract
  */
 public class LockFactory<T> {
 
@@ -27,11 +36,15 @@ public class LockFactory<T> {
     }
 
     public LockFactory(final Function<T, ReadWriteLock> lockSupplier) {
+        // TODO see ConcurrentReferenceHashMap used by XSync:
+        // https://github.com/antkorwin/xsync/blob/master/src/main/java/org/hibernate/validator/internal/util/ConcurrentReferenceHashMap.java
         this(Collections.synchronizedMap(new WeakHashMap<>()), lockSupplier);
     }
 
     public LockFactory(final int initialCapacity, final float loadFactor,
             final Function<T, ReadWriteLock> lockSupplier) {
+        // TODO see ConcurrentReferenceHashMap used by XSync:
+        // https://github.com/antkorwin/xsync/blob/master/src/main/java/org/hibernate/validator/internal/util/ConcurrentReferenceHashMap.java
         this(Collections.synchronizedMap(new WeakHashMap<>(initialCapacity, loadFactor)), lockSupplier);
     }
 

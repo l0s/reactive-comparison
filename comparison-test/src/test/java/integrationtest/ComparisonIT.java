@@ -19,13 +19,9 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collection;
-import java.util.Map;
-import java.util.Objects;
-import java.util.Queue;
 import java.util.Random;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.function.Consumer;
 import java.util.regex.Pattern;
@@ -48,9 +44,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
-import blocking.BlockingDemoApplication;
 import net.bytebuddy.utility.RandomString;
-import reactive.ReactiveDemoApplication;
 
 @Testcontainers
 @Execution(ExecutionMode.SAME_THREAD)
@@ -58,10 +52,13 @@ public class ComparisonIT {
 
     private final Logger logger = LoggerFactory.getLogger(getClass());
 
+    private final ObjectMapper objectMapper = new ObjectMapper();
+    private final Random random = new Random();
+    private final String baseUrl = "http://localhost:" + 8080;
+    private final HttpClient client = HttpClient.newHttpClient();
+
     private final int userCount = 32;
     private final int messageCount = 4096;
-//    private final int userCount = 2;
-//    private final int messageCount = 4;
 
     @AfterAll
     public static void reportTiming(final TestReporter reporter) {
@@ -74,61 +71,15 @@ public class ComparisonIT {
         }
     }
 
-    protected static enum TimingMetric {
-        CREATE_ALL_USERS,
-        CREATE_SINGLE_USER,
-        PAGE_THROUGH_ALL_USERS,
-        GET_PAGE_OF_USERS,
-        SEND_RECEIVE_ALL_MESSAGES,
-        SEND_SINGLE_MESSAGE,
-        GET_MESSAGES_FOR_USER,
-    }
-
-    protected static enum Paradigm {
-
-        REACTIVE(ReactiveDemoApplication.class),
-        BLOCKING(BlockingDemoApplication.class);
-
-        private final Map<TimingMetric, Collection<Duration>> durations = new ConcurrentHashMap<>();
-        private final Class<?> mainClass;
-
-        private Paradigm(final Class<?> mainClass) {
-            Objects.requireNonNull(mainClass);
-            this.mainClass = mainClass;
-        }
-
-        public Class<?> getMainClass() {
-            return mainClass;
-        }
-
-        public void logDuration(final TimingMetric metric, final Duration duration) {
-            final var bucket = durations.computeIfAbsent(metric, key -> new ConcurrentLinkedQueue<>());
-            bucket.add(duration);
-        }
-
-        public Duration getAverageDuration(final TimingMetric metric) {
-            final var bucket = durations.get(metric);
-            if (bucket == null || bucket.isEmpty()) {
-                return null;
-            }
-            var total = Duration.ZERO;
-            for (final var duration : bucket) {
-                total = total.plus(duration);
-            }
-            return total.dividedBy(bucket.size());
-        }
-
-    }
-
     @TestFactory
     public Stream<DynamicNode> testContainers(final TestReporter reporter) {
         System.setProperty("reactor.netty.ioWorkerCount", "" + 4);
         System.setProperty("reactor.netty.pool.maxConnections", "" + 4);
         reporter.publishEntry("generating dynamic nodes");
-//        return Stream.of(Paradigm.REACTIVE)
-        return Stream.of(Paradigm.REACTIVE, Paradigm.BLOCKING, Paradigm.REACTIVE,
-                Paradigm.BLOCKING)
-//        return Stream.of(Paradigm.BLOCKING)
+
+        // Due to JVM optimisation, the first paradigm to execute will be at a
+        // disadvantage
+        return Stream.of(Paradigm.REACTIVE, Paradigm.BLOCKING, Paradigm.REACTIVE, Paradigm.BLOCKING)
             .map(paradigm -> {
 
                 final var application = new SpringApplication(paradigm.getMainClass());
@@ -158,18 +109,19 @@ public class ComparisonIT {
                     dynamicTest("context is running", () -> assertTrue(context.isRunning())),
                     dynamicTest("no users returned", this::verifyEmpty),
                     dynamicTest("can create users", () -> verifyCanCreateUsers(paradigm, userUrls::addAll)),
-                    dynamicTest("can paginate through users", () -> verifyPaginationAsync(paradigm, userUrls, userIds::add)),
+                    dynamicTest("can paginate through users", () -> verifyPagination(paradigm, userUrls, userIds::add)),
                     dynamicTest("can send messages", () -> verifyMessages(paradigm, userIds)),
                     dynamicTest("context can be closed", context::close),
                     dynamicTest("database can be closed", database::stop)));
             });
     }
 
+    /**
+     * Verify that given an empty database, the API returns an array of zero users.
+     */
     protected final void verifyEmpty() throws IOException, InterruptedException, URISyntaxException {
         // given
-        final var objectMapper = new ObjectMapper();
-        final var baseUrl = "http://localhost:" + 8080 + "/users/";
-        final var client = HttpClient.newHttpClient();
+        final var baseUrl = this.baseUrl + "/users/";
         final var request = HttpRequest.newBuilder(new URI(baseUrl)).GET().build();
 
         // when
@@ -185,9 +137,15 @@ public class ComparisonIT {
         }
     }
 
-    protected final void verifyCanCreateUsers(final Paradigm paradigm, final Consumer<Collection<URL>> sink) {
-        final var baseUrl = "http://localhost:" + 8080 + "/users/";
-        final var client = HttpClient.newHttpClient();
+    /**
+     * Verify that we can create {@link #userCount} users. Concurrency for
+     * the operations is determined by the JVM.
+     *
+     * @param paradigm the type of application backing the API
+     * @param sink     destination for all of the user URLs generated
+     */
+    protected final void verifyCanCreateUsers(final Paradigm paradigm, final Consumer<? super Collection<? extends URL>> sink) {
+        final var baseUrl = this.baseUrl + "/users/";
         final var startTime = Instant.now();
         final var urls = IntStream.range(0, userCount)
             .parallel()
@@ -220,11 +178,17 @@ public class ComparisonIT {
         sink.accept(urls);
     }
 
-    protected final void verifyPaginationAsync(final Paradigm paradigm, final Collection<URL> urls, final Consumer<UUID> userIdSink) throws IOException, InterruptedException {
+    /**
+     * Verify that we can paginate through all of the users.
+     *
+     * @param paradigm the type of application backing the API
+     * @param urls all of the user URLs 
+     * @param userIdSink a destination for all of the user IDs
+     */
+    protected final void verifyPagination(final Paradigm paradigm, final Collection<? extends URL> urls,
+            final Consumer<? super UUID> userIdSink) throws IOException, InterruptedException {
         // given
-        final var objectMapper = new ObjectMapper();
-        final var baseUrl = "http://localhost:" + 8080 + "/users/";
-        final var client = HttpClient.newHttpClient();
+        final var baseUrl = this.baseUrl + "/users/";
         final var startTime = Instant.now();
 
         // when
@@ -255,29 +219,33 @@ public class ComparisonIT {
         paradigm.logDuration(TimingMetric.PAGE_THROUGH_ALL_USERS, Duration.between(startTime, Instant.now()));
     }
 
-    protected final void verifyMessages(final Paradigm paradigm, final Queue<UUID> userIdQueue)
-            throws URISyntaxException {
+    /**
+     * Simulate sending and receiving {@link #messageCount} messages between
+     * users in the system. Concurrency is determined by the JVM.
+     *
+     * @param paradigm the type of application backing the API
+     * @param userIds  the user IDs in the system
+     */
+    protected final void verifyMessages(final Paradigm paradigm, final Collection<? extends UUID> userIds) {
         // given
-        final var objectMapper = new ObjectMapper();
-        final var random = new Random();
-        final var baseUrl = "http://localhost:" + 8080;
         final var pattern = Pattern.compile("messages/.*$");
-        final var client = HttpClient.newHttpClient();
-        final var userIds = new ArrayList<>(userIdQueue);
+        final var userIdList = new ArrayList<>(userIds);
 
         final var startTime = Instant.now();
         final var responseBodyHandler = BodyHandlers.ofString();
 
-        IntStream.range(0, messageCount).parallel().mapToObj(ignore -> {
-            final var senderIndex = random.nextInt(userIds.size());
+        IntStream.range(0, messageCount).parallel().mapToObj(_index -> {
+            // select a random sender and a random recipient (other than the sender)
+            final var senderIndex = random.nextInt(userIdList.size());
             var recipientIndex = senderIndex;
             while (recipientIndex == senderIndex) {
-                recipientIndex = random.nextInt(userIds.size());
+                recipientIndex = random.nextInt(userIdList.size());
             }
 
-            final var senderId = userIds.get(senderIndex);
-            final var recipientId = userIds.get(recipientIndex);
+            final var senderId = userIdList.get(senderIndex);
+            final var recipientId = userIdList.get(recipientIndex);
 
+            // prepare a message
             final var bodyPublisher = BodyPublishers.ofString(RandomString.make(8192));
             try {
                 return HttpRequest.newBuilder(new URI(baseUrl + "/users/" + senderId + "/messages/outgoing/"
@@ -290,6 +258,7 @@ public class ComparisonIT {
         })
         // when
         .map(request -> {
+            // send the message asynchronously
             final var start = Instant.now();
             return client.sendAsync(request, responseBodyHandler).whenComplete((response, error) -> paradigm
                     .logDuration(TimingMetric.SEND_SINGLE_MESSAGE, Duration.between(start, Instant.now())));

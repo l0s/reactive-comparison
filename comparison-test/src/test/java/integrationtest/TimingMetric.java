@@ -1,0 +1,11 @@
+package integrationtest;
+
+enum TimingMetric {
+    CREATE_ALL_USERS,
+    CREATE_SINGLE_USER,
+    PAGE_THROUGH_ALL_USERS,
+    GET_PAGE_OF_USERS,
+    SEND_RECEIVE_ALL_MESSAGES,
+    SEND_SINGLE_MESSAGE,
+    GET_MESSAGES_FOR_USER,
+}

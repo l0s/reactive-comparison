@@ -10,6 +10,7 @@ import javax.sql.DataSource;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Repository;
 
 import domain.User;
@@ -17,6 +18,7 @@ import io.github.resilience4j.circuitbreaker.annotation.CircuitBreaker;
 import io.github.resilience4j.retry.annotation.Retry;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
+import reactor.core.scheduler.Scheduler;
 
 @CircuitBreaker(name="userRepository")
 @Retry(name="userRepository")
@@ -28,17 +30,19 @@ public class UserRepository {
     private static final String insertionTemplate = "INSERT INTO \"User\"( id, name ) values( ?, ? );";
 
     private final Logger logger = LoggerFactory.getLogger(getClass());
-
     /*
      * Using direct JDBC for demonstration purposes. In practice, a reactive
      * JDBC framework would be used.
      */
     private final DataSource dataSource;
+    private final Scheduler scheduler;
 
     @Autowired
-    public UserRepository(final DataSource dataSource) {
+    public UserRepository(final DataSource dataSource, @Qualifier("databaseScheduler") final Scheduler scheduler) {
         Objects.requireNonNull(dataSource);
+        Objects.requireNonNull(scheduler);
         this.dataSource = dataSource;
+        this.scheduler = scheduler;
     }
 
     public void createUser(final User user) {
@@ -57,7 +61,7 @@ public class UserRepository {
     }
 
     public Mono<User> findById(final UUID id) {
-        return Mono.create(sink -> {
+        final Mono<User> mono = Mono.create(sink -> {
             try {
                 try (var connection = getDataSource().getConnection()) {
                     try (var statement = connection.prepareStatement(selectByIdTemplate, ResultSet.TYPE_FORWARD_ONLY,
@@ -86,11 +90,12 @@ public class UserRepository {
                 sink.error(e);
             }
         });
+        return mono.publishOn(getScheduler());
     }
 
     public Flux<User> findAll(final int pageNumber, final int pageSize) {
         final var offset = pageSize * pageNumber;
-        return Flux.create(sink -> {
+        final Flux<User> flux = Flux.create(sink -> {
             try (var connection = getDataSource().getConnection()) {
                 try (var statement = connection.prepareStatement(selectAllTemplate, ResultSet.TYPE_FORWARD_ONLY,
                         ResultSet.CONCUR_READ_ONLY)) {
@@ -111,10 +116,15 @@ public class UserRepository {
                 sink.error(se);
             }
         });
+        return flux/*.publishOn(getScheduler())*/; // FIXME executing on scheduler causes incorrect behaviour
     }
 
     protected DataSource getDataSource() {
         return dataSource;
+    }
+
+    protected Scheduler getScheduler() {
+        return scheduler;
     }
 
 }
