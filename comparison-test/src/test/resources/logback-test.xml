@@ -9,6 +9,7 @@
     <root level="error">
         <appender-ref ref="STDOUT"/>
     </root>
+    <logger name="integrationtest" level="debug" />
     <logger name="reactive" level="debug" />
     <logger name="reactor" level="warn" />
     <logger name="com.macasaet" level="debug"/>

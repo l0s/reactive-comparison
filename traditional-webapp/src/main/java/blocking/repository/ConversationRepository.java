@@ -26,12 +26,8 @@ import org.springframework.stereotype.Repository;
 import domain.Conversation;
 import domain.Message;
 import domain.User;
-import io.github.resilience4j.circuitbreaker.annotation.CircuitBreaker;
-import io.github.resilience4j.retry.annotation.Retry;
 import sync.LockFactory;
 
-@CircuitBreaker(name="conversationRepository")
-@Retry(name="conversationRepository")
 @Repository
 public class ConversationRepository {
 

@@ -41,9 +41,6 @@ import org.springframework.boot.SpringApplication;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
-
 import net.bytebuddy.utility.RandomString;
 
 @Testcontainers
@@ -52,7 +49,6 @@ public class ComparisonIT {
 
     private final Logger logger = LoggerFactory.getLogger(getClass());
 
-    private final ObjectMapper objectMapper = new ObjectMapper();
     private final Random random = new Random();
     private final String baseUrl = "http://localhost:" + 8080;
     private final HttpClient client = HttpClient.newHttpClient();
@@ -125,16 +121,14 @@ public class ComparisonIT {
         final var request = HttpRequest.newBuilder(new URI(baseUrl)).GET().build();
 
         // when
-        final var response = client.send(request, BodyHandlers.ofInputStream());
+        final var response = client.send(request, new JsonNodeBodyHandler());
 
         // then
         assertEquals(200, response.statusCode());
         assertEquals(0, response.headers().allValues("Link").size());
-        try (var content = response.body()) {
-            final var root = objectMapper.readTree(content);
-            assertTrue(root.isArray());
-            assertTrue(root.isEmpty());
-        }
+        final var root = response.body();
+        assertTrue(root.isArray());
+        assertTrue(root.isEmpty());
     }
 
     /**
@@ -197,19 +191,17 @@ public class ComparisonIT {
         while (next != null) {
             final var request = HttpRequest.newBuilder(URI.create(next)).GET().build();
             final var start = Instant.now();
-            final var response = client.send(request, BodyHandlers.ofInputStream());
+            final var response = client.send(request, new JsonNodeBodyHandler());
             paradigm.logDuration(TimingMetric.GET_PAGE_OF_USERS, Duration.between(start, Instant.now()));
             assertEquals(200, response.statusCode());
-            try (var content = response.body()) {
-                final var root = objectMapper.readTree(content);
-                assertTrue(root.isArray());
-                count += root.size();
-                for (final var user : root) {
-                    final var id = user.get("id").asText();
-                    final var userUrl = new URL(baseUrl + id.toString());
-                    assertTrue(urls.contains(userUrl));
-                    userIdSink.accept(UUID.fromString(id));
-                }
+            var root = response.body();
+            assertTrue(root.isArray());
+            count += root.size();
+            for (final var user : root) {
+                final var id = user.get("id").asText();
+                final var userUrl = new URL(baseUrl + id.toString());
+                assertTrue(urls.contains(userUrl));
+                userIdSink.accept(UUID.fromString(id));
             }
             next = getNextUrl(response.headers().allValues("Link"));
         }
@@ -232,7 +224,7 @@ public class ComparisonIT {
         final var userIdList = new ArrayList<>(userIds);
 
         final var startTime = Instant.now();
-        final var responseBodyHandler = BodyHandlers.ofString();
+        final var responseBodyHandler = new JsonNodeBodyHandler();
 
         IntStream.range(0, messageCount).parallel().mapToObj(_index -> {
             // select a random sender and a random recipient (other than the sender)
@@ -287,22 +279,17 @@ public class ComparisonIT {
         })
         .map(CompletableFuture::join)
         .map(CompletableFuture::join)
-        .forEach( response -> {
+        .forEach(response -> {
             assertEquals(200, response.statusCode());
-            try {
-                final var root = objectMapper.readTree(response.body());
-                final var messages = root.get("messages");
-                assertFalse(messages.isNull(), "messages object is null");
-                assertTrue(messages.isArray(), "messages object is not an array");
-                assertFalse(messages.isEmpty(), "messages array is empty");
-                final var links = root.get("links");
-                assertFalse(links.isNull(), "links object is null");
-                assertTrue(links.isArray(), "links object is not an array");
-                assertFalse(links.isEmpty(), "link array is empty");
-            } catch (final JsonProcessingException e) {
-                logger.error(e.getMessage(), e);
-                throw new RuntimeException(e.getMessage(), e);
-            }
+            final var root = response.body();
+            final var messages = root.get("messages");
+            assertFalse(messages.isNull(), "messages object is null");
+            assertTrue(messages.isArray(), "messages object is not an array");
+            assertFalse(messages.isEmpty(), "messages array is empty");
+            final var links = root.get("links");
+            assertFalse(links.isNull(), "links object is null");
+            assertTrue(links.isArray(), "links object is not an array");
+            assertFalse(links.isEmpty(), "link array is empty");
         });
         paradigm.logDuration(TimingMetric.SEND_RECEIVE_ALL_MESSAGES, Duration.between(startTime, Instant.now()));
     }
