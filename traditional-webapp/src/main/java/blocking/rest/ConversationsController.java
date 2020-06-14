@@ -15,18 +15,22 @@
  */
 package blocking.rest;
 
+import static blocking.repository.ConversationCursor.Direction.AFTER;
+import static blocking.repository.ConversationCursor.Direction.BEFORE;
 import static org.springframework.hateoas.server.reactive.WebFluxLinkBuilder.linkTo;
 import static org.springframework.hateoas.server.reactive.WebFluxLinkBuilder.methodOn;
 
 import java.nio.charset.Charset;
 import java.time.Clock;
 import java.time.OffsetDateTime;
+import java.util.ArrayList;
 import java.util.Base64;
 import java.util.Base64.Decoder;
 import java.util.Base64.Encoder;
 import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -39,6 +43,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import blocking.repository.ConversationCursor;
 import blocking.repository.ConversationRepository;
 import blocking.repository.UserRepository;
 import domain.Conversation;
@@ -77,8 +82,46 @@ public class ConversationsController {
         }
         final var dto = new ConversationDto();
         dto.setId(conversation.getId().toString());
-        dto.add(linkTo(methodOn(getClass()).getMessages(conversationId, null, null)).withRel("messages").toMono().toFuture().join());
+        dto.add(linkTo(methodOn(getClass()).getMessages(conversationId, null, "")).withRel("messages").toMono()
+                .toFuture().join());
         return ResponseEntity.ok(dto);
+    }
+
+    public ResponseEntity<ConversationListDto> getConversations(final String userId, Integer limit,
+            final String cursor) {
+        final var user = getUserRepository().findById(UUID.fromString(userId));
+        if (user == null) {
+            return ResponseEntity.notFound().build();
+        }
+        if (limit == null || limit < 0) {
+            limit = 8;
+        } else if (limit > 16) {
+            limit = 16;
+        }
+        final ConversationCursor cursorObject = parseConversationCursor(cursor);
+        final var conversations = getRepository().findConversations(user, limit, cursorObject);
+        final var conversationDtos = conversations.stream().map(conversation -> {
+            final var dto = new ConversationDto();
+            final var id = conversation.getId().toString();
+            dto.setId(id);
+            final var link = linkTo(methodOn(getClass()).getConversation(id)).withSelfRel().toMono().toFuture().join();
+            dto.add(link);
+            return dto;
+        }).collect(Collectors.toList());
+        final var retval = new ConversationListDto();
+        retval.setConversations(conversationDtos);
+        if (conversationDtos.size() > 0) {
+            final var first = conversations.get(0);
+            final var last = conversations.get(conversations.size() - 1);
+            retval.add(
+                    linkTo(methodOn(UserController.class).getConversations(userId, limit,
+                            encode(new ConversationCursor(BEFORE, first.getId())))).withRel("previous").toMono()
+                                    .toFuture().join(),
+                    linkTo(methodOn(UserController.class).getConversations(userId, limit,
+                            encode(new ConversationCursor(AFTER, last.getId())))).withRel("next").toMono().toFuture()
+                                    .join());
+        }
+        return ResponseEntity.ok(retval);
     }
 
     public static class ConversationDto extends RepresentationModel<ConversationDto> {
@@ -93,6 +136,18 @@ public class ConversationsController {
         }
     }
 
+    public static class ConversationListDto extends RepresentationModel<ConversationListDto> {
+        private List<ConversationDto> conversations = new ArrayList<>();
+
+        public List<ConversationDto> getConversations() {
+            return conversations;
+        }
+
+        public void setConversations(List<ConversationDto> conversations) {
+            this.conversations = conversations;
+        }
+    }
+
     @GetMapping("/{conversationId}/messages/{id}")
     public ResponseEntity<Message> getMessage(@PathVariable final String conversationId,
             @PathVariable final int id) {
@@ -104,7 +159,7 @@ public class ConversationsController {
 
     @GetMapping("/{conversationId}/messages")
     public ResponseEntity<MessageListDto> getMessages(@PathVariable final String conversationId,
-            @RequestParam(defaultValue = "8") Integer limit, @RequestParam(required = false) final String cursor) {
+            @RequestParam(defaultValue = "8") Integer limit, @RequestParam(required = false, defaultValue = "") final String cursor) {
         if (limit == null || limit < 0) {
             limit = 8;
         } else if (limit > 16) {
@@ -130,12 +185,12 @@ public class ConversationsController {
             if (first.getId() > Integer.MIN_VALUE) {
                 // there *may* be a previous page
                 dto.add(linkTo(methodOn(ConversationsController.class).getMessages(conversationId, limit,
-                        createCursor(first.getId() - 1))).withRel("previous").toMono().toFuture().join());
+                        createMessageCursor(first.getId() - 1))).withRel("previous").toMono().toFuture().join());
             }
         }
         if (messageIndex >= conversation.getNextMessageId()) {
             dto.add(linkTo(methodOn(ConversationsController.class).getMessages(conversationId, limit,
-                    createCursor(messageIndex + limit))).withRel("next").toMono().toFuture().join());
+                    createMessageCursor(messageIndex + limit))).withRel("next").toMono().toFuture().join());
         }
         dto.add(linkTo(methodOn(getClass()).getConversation(conversationId)).withRel("conversation").toMono().toFuture().join());
         return ResponseEntity.ok(dto);
@@ -177,13 +232,13 @@ public class ConversationsController {
         return ResponseEntity.ok(message);
     }
 
-    protected String createCursor(final int messageIndex) {
+    protected String createMessageCursor(final int messageIndex) {
         final String string = "id:" + messageIndex;
         return encoder.encodeToString(string.getBytes(charset));
     }
 
     protected Integer getMessageIndex(final String cursor) {
-        if (cursor == null || cursor.isEmpty() || cursor.isBlank()) {
+        if (cursor == null || cursor.isBlank()) {
             // no cursor is provided, get the latest messages
             return Integer.MAX_VALUE;
         }
@@ -203,6 +258,35 @@ public class ConversationsController {
         }
     }
 
+    protected String encode(final ConversationCursor cursor) {
+        final var string = "v1." + (cursor.getDirection() == BEFORE ? "before" : "after") + ":"
+                + cursor.getReferenceId();
+        return encoder.encodeToString(string.getBytes(charset));
+    }
+
+    protected ConversationCursor parseConversationCursor(final String cursor) {
+        if (cursor == null || cursor.isBlank()) {
+            // no cursor provided, get the lowest possible value
+            final var lowestPossibleId = new UUID(Long.MIN_VALUE, Long.MIN_VALUE); // not really a valid UUID
+            return new ConversationCursor(AFTER, lowestPossibleId);
+        }
+        final var bytes = decoder.decode(cursor.strip());
+        final var string = new String(bytes, charset);
+        final var components = string.split(":", 1);
+        if (components.length != 2) {
+            // invalid cursor syntax
+            throw new IllegalArgumentException("Invalid cursor: " + cursor);
+        }
+        final var referenceId = UUID.fromString(components[1]);
+        if ("v1.before".contentEquals(components[0])) {
+            return new ConversationCursor(BEFORE, referenceId);
+        } else if ("v1.after".contentEquals(components[0])) {
+            return new ConversationCursor(AFTER, referenceId);
+        } else {
+            throw new IllegalArgumentException("Invalid cursor: " + cursor);
+        }
+    }
+
     protected ConversationRepository getRepository() {
         return repository;
     }
@@ -214,4 +298,5 @@ public class ConversationsController {
     protected UserRepository getUserRepository() {
         return userRepository;
     }
+
 }

@@ -38,6 +38,10 @@ import java.util.Random;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
@@ -82,6 +86,16 @@ public class ComparisonIT {
         }
     }
 
+    @AfterAll
+    public static void reportThroughput(final TestReporter reporter) {
+        for (final var metric : CountMetric.values()) {
+            reporter.publishEntry(metric.name());
+            for (final var paradigm : Paradigm.values()) {
+                reporter.publishEntry(paradigm.name(), paradigm.getThroughput(metric) + " requests/second");
+            }
+        }
+    }
+
     @TestFactory
     public Stream<DynamicNode> testContainers(final TestReporter reporter) {
         System.setProperty("reactor.netty.ioWorkerCount", "" + 4);
@@ -122,6 +136,8 @@ public class ComparisonIT {
                     dynamicTest("can create users", () -> verifyCanCreateUsers(paradigm, userUrls::addAll)),
                     dynamicTest("can paginate through users", () -> verifyPagination(paradigm, userUrls, userIds::add)),
                     dynamicTest("can send messages", () -> verifyMessages(paradigm, userIds)),
+                    dynamicTest("can sustain message sending", () -> testSendingThroughput(paradigm, userIds)),
+                    dynamicTest("can sustain retrieving message", () -> testRetrievalThroughput(paradigm, userIds)),
                     dynamicTest("context can be closed", context::close),
                     dynamicTest("database can be closed", database::stop)));
             });
@@ -307,6 +323,140 @@ public class ComparisonIT {
             assertFalse(links.isEmpty(), "link array is empty");
         });
         paradigm.logDuration(TimingMetric.SEND_RECEIVE_ALL_MESSAGES, Duration.between(startTime, Instant.now()));
+    }
+
+    /**
+     * Send as many messages as possible within 15 seconds.
+     *
+     * @param paradigm receives the throughput result
+     * @param userIds all of the user IDs in the system
+     */
+    protected void testSendingThroughput(final Paradigm paradigm, final Collection<? extends UUID> userIds) {
+        // given
+        final var userIdList = new ArrayList<>(userIds);
+        final var limit = Duration.ofSeconds(15);
+        final var deadline = Instant.now().plus(limit);
+
+        final var responseBodyHandler = new JsonNodeBodyHandler();
+        final ThreadPoolExecutor executor = new ThreadPoolExecutor(16, 16, 15, TimeUnit.SECONDS,
+                new LinkedBlockingQueue<Runnable>());
+        final var counter = new AtomicInteger();
+
+        // when
+        while (Instant.now().isBefore(deadline)) {
+            executor.execute(() -> {
+                if (Instant.now().isAfter(deadline)) {
+                    return;
+                }
+                // select a random sender and a random recipient (other than the sender)
+                final var senderIndex = random.nextInt(userIdList.size());
+                var recipientIndex = senderIndex;
+                while (recipientIndex == senderIndex) {
+                    recipientIndex = random.nextInt(userIdList.size());
+                }
+
+                final var senderId = userIdList.get(senderIndex);
+                final var recipientId = userIdList.get(recipientIndex);
+
+                // prepare a message
+                final var bodyPublisher = BodyPublishers.ofString(RandomString.make(8192));
+                try {
+                    final var request = HttpRequest
+                            .newBuilder(new URI(baseUrl + "/users/" + senderId + "/messages/outgoing/" + recipientId))
+                            .POST(bodyPublisher).build();
+                    final var response = client.send(request, responseBodyHandler);
+                    if (Instant.now().isBefore(deadline) && response.statusCode() >= 200
+                            && response.statusCode() < 300) {
+                        counter.incrementAndGet();
+                    }
+                } catch (final InterruptedException ie) {
+                    return;
+                } catch (final URISyntaxException | IOException e) {
+                    logger.error(e.getMessage(), e);
+                    throw new RuntimeException(e.getMessage(), e);
+                }
+            });
+        }
+        executor.shutdown();
+        executor.shutdownNow();
+
+        // then
+        paradigm.logThroughput(CountMetric.SENT_MESSAGES, counter.get(), limit);
+    }
+
+    /**
+     * Retrieve as many messages as possible within 15 seconds. Each
+     * operation is actually three HTTP calls and the operation is only
+     * counted if all three calls complete before time runs out.
+     * 
+     * @param paradigm receives the throughput result
+     * @param userIds  all of the user IDs in the system
+     */
+    protected void testRetrievalThroughput(final Paradigm paradigm, final Collection<? extends UUID> userIds) {
+        // given
+        final var userIdList = new ArrayList<>(userIds);
+        final var limit = Duration.ofSeconds(15);
+        final var deadline = Instant.now().plus(limit);
+
+        final var responseBodyHandler = new JsonNodeBodyHandler();
+        final ThreadPoolExecutor executor = new ThreadPoolExecutor(16, 16, 15, TimeUnit.SECONDS,
+                new LinkedBlockingQueue<Runnable>());
+        final var counter = new AtomicInteger();
+
+        // when
+        for (int recipientIndex = random.nextInt(userIdList.size()); Instant.now()
+                .isBefore(deadline); recipientIndex = random.nextInt(userIdList.size())) {
+            final var recipientId = userIdList.get(recipientIndex);
+            executor.execute(() -> {
+                if (Instant.now().isAfter(deadline)) {
+                    return;
+                }
+                try {
+                    // get all conversations for a user (first page)
+                    final var conversationsRequest = HttpRequest
+                            .newBuilder(new URI(baseUrl + "/users/" + recipientId + "/conversations")).GET().build();
+                    final var conversationsResponse = client.send(conversationsRequest, responseBodyHandler);
+                    final var conversationsRoot = conversationsResponse.body();
+                    final var conversationsArray = conversationsRoot.get("conversations");
+                    final var firstConversation = conversationsArray.get(0);
+                    final var links = firstConversation.get("links");
+                    final var conversationLink = links.get(0);
+                    assertEquals("self", conversationLink.get("rel").asText());
+                    final var path = conversationLink.get("href").asText();
+
+                    // get the first conversation
+                    final var conversationRequest = HttpRequest.newBuilder(new URI(baseUrl + path)).GET().build();
+                    final var conversationResponse = client.send(conversationRequest, responseBodyHandler);
+                    final var conversationRoot = conversationResponse.body();
+                    final var conversationLinks = conversationRoot.get("links");
+                    final var messagesLink = conversationLinks.get(0);
+                    assertEquals("messages", messagesLink.get("rel").asText());
+                    final var messagesPath = messagesLink.get("href").asText();
+
+                    // get all the messages for the first conversation (first page)
+                    final var messagesRequest = HttpRequest.newBuilder(new URI(baseUrl + messagesPath)).GET().build();
+                    final var messagesResponse = client.send(messagesRequest, responseBodyHandler);
+                    final var messagesRoot = messagesResponse.body();
+                    assertFalse(messagesRoot.isNull());
+                    if (Instant.now().isBefore(deadline)) {
+                        counter.incrementAndGet();
+                    }
+                } catch (final URISyntaxException | IOException e) {
+                    logger.error(e.getMessage(), e);
+                    throw new RuntimeException(e.getMessage(), e);
+                } catch (final InterruptedException e) {
+                    // exceeded time limit
+                    return;
+                }
+            });
+        }
+
+        // then
+        executor.shutdown();
+        executor.shutdownNow();
+
+        // then
+        paradigm.logThroughput(CountMetric.RETRIEVED_MESSAGES, counter.get(), limit);
     }
 
     protected String getNextUrl(final Iterable<? extends String> headerValues) {

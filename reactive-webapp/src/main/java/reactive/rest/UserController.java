@@ -37,6 +37,7 @@ import org.springframework.web.bind.annotation.RestController;
 import domain.Message;
 import domain.User;
 import reactive.repository.UserRepository;
+import reactive.rest.ConversationsController.ConversationListDto;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
@@ -119,6 +120,11 @@ public class UserController {
     public Mono<ResponseEntity<Message>> getDirectMessage(@PathVariable final String senderId,
             @PathVariable final String recipientId, @PathVariable final int id) {
         return getConversationsController().getMessage(senderId, recipientId, id);
+    }
+
+    @GetMapping("/{userId}/conversations")
+    public Mono<ResponseEntity<ConversationListDto>> getConversations(@PathVariable final String userId, @RequestParam(defaultValue = "8") Integer limit, @RequestParam(required = false) final String cursor) {
+        return getConversationsController().getConversations(userId, limit, cursor);
     }
 
     public ConversationsController getConversationsController() {

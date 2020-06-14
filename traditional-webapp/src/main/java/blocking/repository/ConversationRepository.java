@@ -25,6 +25,7 @@ import java.sql.Connection;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.OffsetDateTime;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedList;
 import java.util.List;
@@ -35,9 +36,11 @@ import javax.sql.DataSource;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.slf4j.MDC;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Repository;
 
+import blocking.repository.ConversationCursor.Direction;
 import domain.Conversation;
 import domain.Message;
 import domain.User;
@@ -193,6 +196,48 @@ public class ConversationRepository {
                     + secondParticipant + ": " + se.getMessage();
             logger.error(message, se);
             throw new RuntimeException(message, se);
+        }
+    }
+
+    public List<Conversation> findConversations(final User user, final int limit, final ConversationCursor cursor) {
+        Objects.requireNonNull(user, "user cannot be null");
+        Objects.requireNonNull(cursor, "cursor cannot be null");
+        if (limit < 0) {
+            throw new IllegalArgumentException("limit must be non-negative");
+        }
+        try (var connection = getDataSource().getConnection()) {
+            final var queryBuilder = new StringBuilder();
+            queryBuilder.append("SELECT c.id, c.next_message_id\n");
+            queryBuilder.append("FROM Conversation_Participant p\n");
+            queryBuilder.append("  INNER JOIN Conversation c ON c.id=p.conversation_id\n");
+            queryBuilder.append("WHERE p.user_id=?\n");
+            queryBuilder.append("  AND " + cursor.genClause("c.id"));
+            queryBuilder.append(cursor.genOrdering("c.id")).append('\n');
+            queryBuilder.append("LIMIT ?;");
+            try (var statement = connection.prepareStatement(queryBuilder.toString())) {
+                statement.setObject(1, user.getId());
+                statement.setObject(2, cursor.getReferenceId());
+                statement.setObject(3, limit);
+                try (var resultSet = statement.executeQuery()) {
+                    final var list = new ArrayList<Conversation>();
+                    while (resultSet.next()) {
+                        final var conversation = new Conversation(resultSet.getObject("id", UUID.class),
+                                resultSet.getInt("next_message_id"));
+                        list.add(conversation);
+                    }
+                    if (cursor.getDirection() == Direction.BEFORE) {
+                        Collections.reverse(list);
+                    }
+                    return Collections.unmodifiableList(list);
+                }
+            }
+        } catch (final SQLException se) {
+            MDC.put("userId", user.getId().toString());
+            MDC.put("limit", "" + limit);
+            MDC.put("cursor", cursor.toString());
+            MDC.put("causeMessage", se.getMessage());
+            logger.error("Error finding conversations for user", se);
+            throw new RuntimeException(se.getMessage(), se);
         }
     }
 

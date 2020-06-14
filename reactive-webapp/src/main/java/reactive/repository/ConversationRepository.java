@@ -18,6 +18,7 @@ package reactive.repository;
 import static java.sql.ResultSet.CONCUR_READ_ONLY;
 import static java.sql.ResultSet.TYPE_FORWARD_ONLY;
 import static java.sql.ResultSet.TYPE_SCROLL_SENSITIVE;
+import static reactive.repository.ConversationCursor.Direction.BEFORE;
 
 import java.io.ByteArrayOutputStream;
 import java.io.DataOutputStream;
@@ -33,6 +34,7 @@ import javax.sql.DataSource;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.slf4j.MDC;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Repository;
@@ -40,6 +42,7 @@ import org.springframework.stereotype.Repository;
 import domain.Conversation;
 import domain.Message;
 import domain.User;
+import jdbc.util.ResultSetTraverser;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Scheduler;
@@ -211,6 +214,50 @@ public class ConversationRepository {
             }
         })
         .publishOn(getScheduler());
+    }
+
+    public Flux<Conversation> findConversations(final Mono<User> user, final int limit, final ConversationCursor cursor) {
+        if (limit < 0) {
+            return Flux.error(new IllegalArgumentException("limit must be non-negative"));
+        }
+        return user.flatMapMany(u -> {
+            return Flux.create(sink -> {
+                try (var connection = getDataSource().getConnection()) {
+                    final var queryBuilder = new StringBuilder();
+                    queryBuilder.append("SELECT c.id, c.next_message_id\n");
+                    queryBuilder.append("FROM Conversation_Participant p\n");
+                    queryBuilder.append("  INNER JOIN Conversation c ON c.id=p.conversation_id\n");
+                    queryBuilder.append("WHERE p.user_id=?\n");
+                    queryBuilder.append("  AND " + cursor.genClause("c.id"));
+                    queryBuilder.append(cursor.genOrdering("c.id")).append('\n');
+                    queryBuilder.append("LIMIT ?;");
+                    try (var statement = connection.prepareStatement(queryBuilder.toString())) {
+                        statement.setObject(1, u.getId());
+                        statement.setObject(2, cursor.getReferenceId());
+                        statement.setObject(3, limit);
+                        try (var resultSet = statement.executeQuery()) {
+                            if( cursor.getDirection() == BEFORE ) {
+                                resultSet.afterLast();
+                            }
+                            final ResultSetTraverser iterator = cursor.getDirection() == BEFORE ? resultSet::previous : resultSet::next;
+                            while (iterator.iterate()) {
+                                final var conversation = new Conversation(resultSet.getObject("id", UUID.class),
+                                        resultSet.getInt("next_message_id"));
+                                sink.next(conversation);
+                            }
+                            sink.complete();
+                        }
+                    }
+                } catch (final SQLException se) {
+                    MDC.put("userId", u.getId().toString());
+                    MDC.put("limit", "" + limit);
+                    MDC.put("cursor", cursor.toString());
+                    MDC.put("causeMessage", se.getMessage());
+                    logger.error("Error finding conversations for user", se);
+                    sink.error(se);
+                }
+            });
+        });
     }
 
     public Mono<Message> findMessage(final UUID conversationId, final int messageId) {

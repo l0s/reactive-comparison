@@ -17,10 +17,13 @@ package reactive.rest;
 
 import static org.springframework.hateoas.server.reactive.WebFluxLinkBuilder.linkTo;
 import static org.springframework.hateoas.server.reactive.WebFluxLinkBuilder.methodOn;
+import static reactive.repository.ConversationCursor.Direction.AFTER;
+import static reactive.repository.ConversationCursor.Direction.BEFORE;
 
 import java.nio.charset.Charset;
 import java.time.Clock;
 import java.time.OffsetDateTime;
+import java.util.ArrayList;
 import java.util.Base64;
 import java.util.Base64.Decoder;
 import java.util.Base64.Encoder;
@@ -29,6 +32,7 @@ import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.LinkedBlockingQueue;
+import java.util.stream.Collectors;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -46,6 +50,8 @@ import org.springframework.web.bind.annotation.RestController;
 
 import domain.Conversation;
 import domain.Message;
+import reactive.repository.ConversationCursor;
+import reactive.repository.ConversationCursor.Direction;
 import reactive.repository.ConversationRepository;
 import reactive.repository.UserRepository;
 import reactor.core.publisher.Mono;
@@ -78,12 +84,57 @@ public class ConversationsController {
 
     @GetMapping("/{conversationId}")
     public Mono<ResponseEntity<ConversationDto>> getConversation(@PathVariable final String conversationId) {
-        // FIXME add link to messages
-        return getRepository().findConversation(UUID.fromString(conversationId))
-            .switchIfEmpty(Mono.just(null))
-            .handle(this::emitDto)
-            .map(ResponseEntity::ok)
-            .defaultIfEmpty(ResponseEntity.status(HttpStatus.NOT_FOUND).body(null));
+        return getRepository().findConversation(UUID.fromString(conversationId)).flatMap(conversation -> {
+            final String id = conversation.getId().toString();
+            final var webfluxLink = linkTo(
+                    methodOn(getClass()).getMessages(id, null, "")).withRel("messages");
+            return webfluxLink.toMono().map(messagesLink -> {
+                final var dto = new ConversationDto();
+                dto.setId(id);
+                dto.add(messagesLink);
+                return ResponseEntity.ok(dto);
+            });
+        }).switchIfEmpty(Mono.just(ResponseEntity.status(HttpStatus.NOT_FOUND).body(null)));
+    }
+
+    public Mono<ResponseEntity<ConversationListDto>> getConversations(final String userId, final Integer limit,
+            final String cursor) {
+        final ConversationCursor cursorObject = parseConversationCursor(cursor);
+        if (limit == null || limit < 0) {
+            return getConversations(userId, 8, cursor);
+        } else if (limit > 16) {
+            return getConversations(userId, 16, cursor);
+        }
+        return getUserRepository().findById(UUID.fromString(userId))
+            .flatMap(user -> {
+                return getRepository().findConversations(Mono.just(user), limit, cursorObject).collectList()
+                    .map(conversations -> {
+                        final var dtos = conversations.stream().map(conversation -> {
+                            final var id = conversation.getId().toString();
+                            final var dto = new ConversationDto();
+                            dto.setId(id);
+                            dto.add(linkTo(methodOn(getClass()).getConversation(id)).withSelfRel().toMono()
+                                    .toFuture().join());
+                            return dto;
+                        }).collect(Collectors.toList());
+                        final var listDto = new ConversationListDto();
+                        listDto.setConversations(dtos);
+                        if (conversations.size() > 0) {
+                            final var first = conversations.get(0);
+                            final var last = conversations.get(conversations.size() - 1);
+                            listDto.add(
+                                    linkTo(methodOn(UserController.class).getConversations(userId, limit,
+                                            encode(new ConversationCursor(BEFORE, first.getId()))))
+                                                    .withRel("previous").toMono().toFuture().join(),
+                                    linkTo(methodOn(UserController.class).getConversations(userId, limit,
+                                            encode(new ConversationCursor(AFTER, last.getId()))))
+                                                    .withRel("next").toMono().toFuture().join());
+                        }
+
+                        return ResponseEntity.ok(listDto);
+                    });
+            })
+            .switchIfEmpty(Mono.just(ResponseEntity.status(HttpStatus.NOT_FOUND).body((ConversationListDto) null)));
     }
 
     public static class ConversationDto extends RepresentationModel<ConversationDto> {
@@ -98,6 +149,18 @@ public class ConversationsController {
         }
     }
 
+    public static class ConversationListDto extends RepresentationModel<ConversationListDto> {
+        private List<ConversationDto> conversations = new ArrayList<>();
+
+        public List<ConversationDto> getConversations() {
+            return conversations;
+        }
+
+        public void setConversations(List<ConversationDto> conversations) {
+            this.conversations = conversations;
+        }
+    }
+
     @GetMapping("/{conversationId}/messages/{id}")
     public Mono<ResponseEntity<Message>> getMessage(@PathVariable final String conversationId,
             @PathVariable final int id) {
@@ -107,7 +170,7 @@ public class ConversationsController {
     @GetMapping("/{conversationId}/messages")
     public Mono<ResponseEntity<MessageListDto>> getMessages(@PathVariable final String conversationId,
             @RequestParam(defaultValue = "8") final Integer limit,
-            @RequestParam(required = false) final String cursor) {
+            @RequestParam(required = false, defaultValue = "") final String cursor) {
         if (limit == null || limit < 0) {
             return getMessages(conversationId, 8, cursor);
         } else if (limit > 16) {
@@ -235,6 +298,53 @@ public class ConversationsController {
             // invalid cursor syntax
             logger.debug("Invalid message cursor: " + cursor + ": " + nfe.getMessage(), nfe);
             return null;
+        }
+    }
+
+    /*
+     * assumes that we sort conversations by ID
+     */
+    protected UUID getConversationIndex(final String cursor) {
+        if (cursor == null || cursor.isBlank()) {
+            // no cursor provided, get the lowest possible value
+            return new UUID(Long.MIN_VALUE, Long.MIN_VALUE); // not really a valid UUID
+        }
+        final var bytes = decoder.decode(cursor.strip());
+        final var string = new String(bytes, charset);
+        final var components = string.split(":", 1);
+        if (components.length != 2 || !"id".equalsIgnoreCase(components[0])) {
+            // invalid cursor syntax
+            return null;
+        }
+        return UUID.fromString(components[1]);
+    }
+
+    protected String encode(final ConversationCursor cursor) {
+        final var string = "v1." + (cursor.getDirection() == Direction.BEFORE ? "before" : "after") + ":"
+                + cursor.getReferenceId();
+        return encoder.encodeToString(string.getBytes(charset));
+    }
+
+    protected ConversationCursor parseConversationCursor(final String cursor) {
+        if (cursor == null || cursor.isBlank()) {
+            // no cursor provided, get the lowest possible value
+            final var lowestPossibleId = new UUID(Long.MIN_VALUE, Long.MIN_VALUE); // not really a valid UUID
+            return new ConversationCursor(Direction.AFTER, lowestPossibleId);
+        }
+        final var bytes = decoder.decode(cursor.strip());
+        final var string = new String(bytes, charset);
+        final var components = string.split(":", 1);
+        if (components.length != 2) {
+            // invalid cursor syntax
+            throw new IllegalArgumentException("Invalid cursor: " + cursor);
+        }
+        final var referenceId = UUID.fromString(components[ 1 ] );
+        if( "v1.before".contentEquals(components[ 0 ] ) ) {
+            return new ConversationCursor(Direction.BEFORE, referenceId);
+        } else if( "v1.after".contentEquals(components[ 0 ] ) ) {
+            return new ConversationCursor(Direction.AFTER, referenceId);
+        } else {
+            throw new IllegalArgumentException("Invalid cursor: " + cursor);
         }
     }
 
