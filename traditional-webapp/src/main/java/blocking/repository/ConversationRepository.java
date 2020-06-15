@@ -31,6 +31,7 @@ import java.util.LinkedList;
 import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
+import java.util.concurrent.locks.StampedLock;
 
 import javax.sql.DataSource;
 
@@ -55,7 +56,9 @@ public class ConversationRepository {
     private final Logger logger = LoggerFactory.getLogger(getClass());
     private final DataSource dataSource;
 
-    private final LockFactory<UUID> lockFactory = new LockFactory<>();
+    private final LockFactory<UUID> lockFactory = new LockFactory<>(key -> {
+        return new StampedLock().asReadWriteLock();
+    });
 
     @Autowired
     public ConversationRepository(final DataSource dataSource) {

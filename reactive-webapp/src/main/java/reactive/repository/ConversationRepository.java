@@ -29,6 +29,7 @@ import java.sql.SQLException;
 import java.time.OffsetDateTime;
 import java.util.Objects;
 import java.util.UUID;
+import java.util.concurrent.locks.StampedLock;
 
 import javax.sql.DataSource;
 
@@ -55,7 +56,9 @@ public class ConversationRepository {
     private static final String findMessagesQuery = "SELECT ts, from_id, body, id FROM Message WHERE conversation_id=? AND id<? ORDER BY id DESC LIMIT ?;";
 
     private final Logger logger = LoggerFactory.getLogger(getClass());
-    private final LockFactory<UUID> lockFactory = new LockFactory<>();
+    private final LockFactory<UUID> lockFactory = new LockFactory<>(key -> {
+        return new StampedLock().asReadWriteLock();
+    });
 
     private final DataSource dataSource;
     private final Scheduler scheduler;
