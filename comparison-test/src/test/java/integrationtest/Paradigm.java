@@ -31,7 +31,7 @@ enum Paradigm {
     BLOCKING(BlockingDemoApplication.class);
 
     private final Map<TimingMetric, Collection<Duration>> durations = new ConcurrentHashMap<>();
-    private final Map<CountMetric, Collection<Float>> counts = new ConcurrentHashMap<>();
+    private final Map<CountMetric, Collection<Double>> counts = new ConcurrentHashMap<>();
     private final Class<?> mainClass;
 
     private Paradigm(final Class<?> mainClass) {
@@ -60,9 +60,9 @@ enum Paradigm {
         return total.dividedBy(bucket.size());
     }
 
-    public void logThroughput(final CountMetric metric, final int count, final Duration limit) {
+    public void logThroughput(final CountMetric metric, final long transactions, final Duration limit) {
         final var bucket = counts.computeIfAbsent(metric, key -> new ConcurrentLinkedQueue<>());
-        final float throughput = (float)count / limit.toSeconds();
+        final double throughput = (double)transactions / limit.toSeconds();
         bucket.add(throughput);
     }
 

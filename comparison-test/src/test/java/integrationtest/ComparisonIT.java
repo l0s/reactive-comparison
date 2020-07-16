@@ -41,7 +41,7 @@ import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.LongAdder;
 import java.util.function.Consumer;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
@@ -340,7 +340,7 @@ public class ComparisonIT {
         final var responseBodyHandler = new JsonNodeBodyHandler();
         final ThreadPoolExecutor executor = new ThreadPoolExecutor(16, 16, 15, TimeUnit.SECONDS,
                 new LinkedBlockingQueue<Runnable>());
-        final var counter = new AtomicInteger();
+        final var counter = new LongAdder();
 
         // when
         while (Instant.now().isBefore(deadline)) {
@@ -367,7 +367,7 @@ public class ComparisonIT {
                     final var response = client.send(request, responseBodyHandler);
                     if (Instant.now().isBefore(deadline) && response.statusCode() >= 200
                             && response.statusCode() < 300) {
-                        counter.incrementAndGet();
+                        counter.increment();
                     }
                 } catch (final InterruptedException ie) {
                     return;
@@ -381,7 +381,7 @@ public class ComparisonIT {
         executor.shutdownNow();
 
         // then
-        paradigm.logThroughput(CountMetric.SENT_MESSAGES, counter.get(), limit);
+        paradigm.logThroughput(CountMetric.SENT_MESSAGES, counter.sum(), limit);
     }
 
     /**
@@ -401,7 +401,7 @@ public class ComparisonIT {
         final var responseBodyHandler = new JsonNodeBodyHandler();
         final ThreadPoolExecutor executor = new ThreadPoolExecutor(16, 16, 15, TimeUnit.SECONDS,
                 new LinkedBlockingQueue<Runnable>());
-        final var counter = new AtomicInteger();
+        final var counter = new LongAdder();
 
         // when
         for (int recipientIndex = random.nextInt(userIdList.size()); Instant.now()
@@ -439,7 +439,7 @@ public class ComparisonIT {
                     final var messagesRoot = messagesResponse.body();
                     assertFalse(messagesRoot.isNull());
                     if (Instant.now().isBefore(deadline)) {
-                        counter.incrementAndGet();
+                        counter.increment();
                     }
                 } catch (final URISyntaxException | IOException e) {
                     logger.error(e.getMessage(), e);
@@ -456,7 +456,7 @@ public class ComparisonIT {
         executor.shutdownNow();
 
         // then
-        paradigm.logThroughput(CountMetric.RETRIEVED_MESSAGES, counter.get(), limit);
+        paradigm.logThroughput(CountMetric.RETRIEVED_MESSAGES, counter.sum(), limit);
     }
 
     protected String getNextUrl(final Iterable<? extends String> headerValues) {
