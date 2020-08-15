@@ -15,12 +15,18 @@
  */
 package reactive;
 
+import static org.springframework.hateoas.config.EnableHypermediaSupport.HypermediaType.HAL;
+import static org.springframework.hateoas.support.WebStack.WEBFLUX;
+
 import java.time.Clock;
 
+import org.springframework.boot.web.embedded.netty.NettyReactiveWebServerFactory;
+import org.springframework.boot.web.reactive.server.ReactiveWebServerFactory;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.ComponentScan;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Import;
+import org.springframework.hateoas.config.EnableHypermediaSupport;
 import org.springframework.web.server.adapter.ForwardedHeaderTransformer;
 
 import com.zaxxer.hikari.HikariConfig;
@@ -33,6 +39,7 @@ import reactor.util.Loggers;
 @Configuration
 @Import(value = {JdbcConfiguration.class})
 @ComponentScan({"reactive"})
+@EnableHypermediaSupport(stacks = WEBFLUX, type = HAL)
 public class ApplicationConfiguration {
 
     static {
@@ -61,6 +68,11 @@ public class ApplicationConfiguration {
     @Bean(name = "databaseScheduler")
     public Scheduler databaseScheduler(final HikariConfig config) {
         return Schedulers.newBoundedElastic(config.getMaximumPoolSize(), Integer.MAX_VALUE, "jdbc-worker");
+    }
+
+    @Bean
+    public ReactiveWebServerFactory webServerFactory() {
+        return new NettyReactiveWebServerFactory();
     }
 
 }

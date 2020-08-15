@@ -13,29 +13,28 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package reactive;
+package async;
 
-import org.springframework.boot.SpringApplication;
 import org.springframework.boot.WebApplicationType;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.boot.builder.SpringApplicationBuilder;
 import org.springframework.context.ConfigurableApplicationContext;
+import org.springframework.scheduling.annotation.EnableAsync;
 
 @SpringBootApplication(scanBasePackageClasses = ApplicationConfiguration.class)
-public class ReactiveDemoApplication {
+@EnableAsync
+public class AsyncDemoApplication {
 
-	public static void main(final String[] args) {
-		run(args);
-	}
+    public static void main(final String[] args) {
+        run(args);
+    }
 
-	public static ConfigurableApplicationContext run(final String[] arguments) {
-	    return createApplication().run(arguments);
-	}
-
-	protected static SpringApplication createApplication() {
-	    final SpringApplicationBuilder builder = new SpringApplicationBuilder(ReactiveDemoApplication.class);
-	    builder.web(WebApplicationType.REACTIVE);
-	    return builder.build();
-	}
+    public static ConfigurableApplicationContext run(final String[] arguments) {
+        final var builder =
+                new SpringApplicationBuilder(AsyncDemoApplication.class)
+                .web(WebApplicationType.SERVLET);
+        final var application = builder.build();
+        return application.run(arguments);
+    }
 
 }

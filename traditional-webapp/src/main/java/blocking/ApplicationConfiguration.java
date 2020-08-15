@@ -15,12 +15,18 @@
  */
 package blocking;
 
+import static org.springframework.hateoas.config.EnableHypermediaSupport.HypermediaType.HAL;
+import static org.springframework.hateoas.support.WebStack.WEBFLUX;
+
 import java.time.Clock;
 
+import org.springframework.boot.web.embedded.netty.NettyReactiveWebServerFactory;
+import org.springframework.boot.web.reactive.server.ReactiveWebServerFactory;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.ComponentScan;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Import;
+import org.springframework.hateoas.config.EnableHypermediaSupport;
 import org.springframework.web.server.adapter.ForwardedHeaderTransformer;
 
 import jdbc.config.JdbcConfiguration;
@@ -28,6 +34,7 @@ import jdbc.config.JdbcConfiguration;
 @Configuration
 @Import(value = {JdbcConfiguration.class})
 @ComponentScan({"blocking"})
+@EnableHypermediaSupport(stacks = WEBFLUX, type = HAL)
 public class ApplicationConfiguration {
 
     @Bean
@@ -38,6 +45,11 @@ public class ApplicationConfiguration {
     @Bean
     public ForwardedHeaderTransformer forwardedHeaderTransformer() {
         return new ForwardedHeaderTransformer();
+    }
+
+    @Bean
+    public ReactiveWebServerFactory webServerFactory() {
+        return new NettyReactiveWebServerFactory();
     }
 
 }

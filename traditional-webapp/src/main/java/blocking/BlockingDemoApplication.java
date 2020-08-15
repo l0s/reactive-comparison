@@ -15,14 +15,24 @@
  */
 package blocking;
 
-import org.springframework.boot.SpringApplication;
+import org.springframework.boot.WebApplicationType;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
+import org.springframework.boot.builder.SpringApplicationBuilder;
+import org.springframework.context.ConfigurableApplicationContext;
 
 @SpringBootApplication(scanBasePackageClasses = ApplicationConfiguration.class)
 public class BlockingDemoApplication {
 
     public static void main(final String[] args) {
-        SpringApplication.run(BlockingDemoApplication.class, args);
+        run(args);
+    }
+
+    public static ConfigurableApplicationContext run(final String[] arguments) {
+        final var builder =
+                new SpringApplicationBuilder(BlockingDemoApplication.class)
+                .web(WebApplicationType.REACTIVE);
+        final var application = builder.build();
+        return application.run(arguments);
     }
 
 }

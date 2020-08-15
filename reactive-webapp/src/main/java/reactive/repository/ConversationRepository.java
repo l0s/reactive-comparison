@@ -29,7 +29,6 @@ import java.sql.SQLException;
 import java.time.OffsetDateTime;
 import java.util.Objects;
 import java.util.UUID;
-import java.util.concurrent.locks.StampedLock;
 
 import javax.sql.DataSource;
 
@@ -56,9 +55,7 @@ public class ConversationRepository {
     private static final String findMessagesQuery = "SELECT ts, from_id, body, id FROM Message WHERE conversation_id=? AND id<? ORDER BY id DESC LIMIT ?;";
 
     private final Logger logger = LoggerFactory.getLogger(getClass());
-    private final LockFactory<UUID> lockFactory = new LockFactory<>(key -> {
-        return new StampedLock().asReadWriteLock();
-    });
+    private final LockFactory<UUID> lockFactory = new LockFactory<>();
 
     private final DataSource dataSource;
     private final Scheduler scheduler;
@@ -147,7 +144,7 @@ public class ConversationRepository {
                 connection.setTransactionIsolation(Connection.TRANSACTION_READ_COMMITTED);
 
                 final var lock = lockFactory.getLock(conversationId);
-                lock.readLock().lock();
+                final long stamp = lock.readLock();
                 try {
                     try (var findStatement = connection.prepareStatement(selectNextMessageIdQuery)) {
                         findStatement.setObject(1, conversationId);
@@ -158,10 +155,10 @@ public class ConversationRepository {
                         }
                     }
                 } finally {
-                    lock.readLock().unlock();
+                    lock.unlockRead(stamp);
                 }
 
-                lock.writeLock().lock();
+                final long writeStamp = lock.writeLock();
                 try {
                     // check for the conversation again just in case another thread created
                     // it after we released the read lock and before we acquired the write
@@ -207,7 +204,7 @@ public class ConversationRepository {
                     }
                     return retval;
                 } finally {
-                    lock.writeLock().unlock();
+                    lock.unlockWrite(writeStamp);
                 }
             } catch (final SQLException se) {
                 final var message = "Error obtaining conversation between " + firstParticipantId + " and "
@@ -344,7 +341,7 @@ public class ConversationRepository {
 
     protected Conversation getAndIncrementMessageId(final Connection connection, final Conversation conversation) throws SQLException {
         final var lock = lockFactory.getLock(conversation.getId());
-        lock.writeLock().lock();
+        final var stamp = lock.writeLock();
         try {
             try (var statement = connection.prepareStatement("SELECT id, next_message_id FROM Conversation WHERE id=?;",
                     ResultSet.TYPE_FORWARD_ONLY, ResultSet.CONCUR_UPDATABLE)) {
@@ -369,7 +366,7 @@ public class ConversationRepository {
                 }
             }
         } finally {
-            lock.writeLock().unlock();
+            lock.unlockWrite(stamp);
         }
     }
 

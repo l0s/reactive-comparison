@@ -20,6 +20,8 @@ import static blocking.repository.ConversationCursor.Direction.BEFORE;
 import static org.springframework.hateoas.server.reactive.WebFluxLinkBuilder.linkTo;
 import static org.springframework.hateoas.server.reactive.WebFluxLinkBuilder.methodOn;
 
+import java.net.URI;
+import java.net.URISyntaxException;
 import java.nio.charset.Charset;
 import java.time.Clock;
 import java.time.OffsetDateTime;
@@ -36,7 +38,9 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.hateoas.RepresentationModel;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.server.reactive.ServerHttpRequest;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -209,7 +213,8 @@ public class ConversationsController {
         }
     }
 
-    public ResponseEntity<Void> sendMessage(final String fromId, final String toId, final String body) {
+    public ResponseEntity<Void> sendMessage(final String fromId, final String toId, final String body,
+            final ServerHttpRequest request) {
         final var sender = getUserRepository().findById(UUID.fromString(fromId));
         final var recipient = getUserRepository().findById(UUID.fromString(toId));
         final Conversation conversation = getRepository().findOrCreateConversation(sender, recipient);
@@ -219,7 +224,21 @@ public class ConversationsController {
         message = getRepository().createMessage(conversation, message);
         final var link = linkTo(methodOn(getClass()).getMessage(conversation.getId().toString(), message.getId()))
                 .withRel("self").toMono().toFuture().join();
-        return ResponseEntity.created(link.toUri()).build();
+        final var linkUri = link.toUri();
+        try {
+            final var uri = setPrefix(request, linkUri);
+            return ResponseEntity.created(uri).build();
+        } catch (final URISyntaxException e) {
+            logger.error(e.getMessage(), e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
+        }
+
+    }
+
+    protected URI setPrefix(final ServerHttpRequest request, final URI linkUri) throws URISyntaxException {
+        final var requestUri = request.getURI();
+        return new URI(requestUri.getScheme(), requestUri.getUserInfo(), requestUri.getHost(), requestUri.getPort(),
+                linkUri.getPath(), linkUri.getQuery(), linkUri.getFragment());
     }
 
     public ResponseEntity<Message> getMessage(final String senderId, final String recipientId, final int id) {

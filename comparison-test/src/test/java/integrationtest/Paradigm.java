@@ -21,26 +21,40 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.function.Function;
 
+import org.springframework.context.ConfigurableApplicationContext;
+
+import async.AsyncDemoApplication;
 import blocking.BlockingDemoApplication;
 import reactive.ReactiveDemoApplication;
 
 enum Paradigm {
 
-    REACTIVE(ReactiveDemoApplication.class),
-    BLOCKING(BlockingDemoApplication.class);
+    /**
+     * Netty + Spring WebFlux + Project Reactor
+     */
+    REACTIVE(ReactiveDemoApplication::run),
+    /**
+     * Tomcat + Sring Web (async)
+     */
+    ASYNC(AsyncDemoApplication::run),
+    /**
+     * Netty + Spring WebFlux (blocking)
+     */
+    BLOCKING(BlockingDemoApplication::run);
 
     private final Map<TimingMetric, Collection<Duration>> durations = new ConcurrentHashMap<>();
     private final Map<CountMetric, Collection<Double>> counts = new ConcurrentHashMap<>();
-    private final Class<?> mainClass;
+    private final Function<String[], ConfigurableApplicationContext> mainMethod;
 
-    private Paradigm(final Class<?> mainClass) {
-        Objects.requireNonNull(mainClass);
-        this.mainClass = mainClass;
+    private Paradigm(final Function<String[], ConfigurableApplicationContext> mainMethod) {
+        Objects.requireNonNull(mainMethod);
+        this.mainMethod = mainMethod;
     }
 
-    public Class<?> getMainClass() {
-        return mainClass;
+    public ConfigurableApplicationContext run(final String... arguments) {
+        return mainMethod.apply(arguments);
     }
 
     public void logDuration(final TimingMetric metric, final Duration duration) {

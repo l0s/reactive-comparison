@@ -24,14 +24,24 @@
     <artifactId>reactive-comparison</artifactId>
     <version>0.0.0-SNAPSHOT</version>
   </parent>
-  <artifactId>domain</artifactId>
-  <name>domain</name>
-  <url>http://maven.apache.org</url>
+  <artifactId>common</artifactId>
+  <name>Common Infrastructure</name>
   <dependencies>
     <dependency>
-      <groupId>junit</groupId>
-      <artifactId>junit</artifactId>
-      <scope>test</scope>
+      <groupId>com.zaxxer</groupId>
+      <artifactId>HikariCP</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.postgresql</groupId>
+      <artifactId>postgresql</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.springframework</groupId>
+      <artifactId>spring-context</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-autoconfigure</artifactId>
     </dependency>
   </dependencies>
 </project>

@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package blocking.repository;
+package async.repository;
 
 import static java.sql.ResultSet.CONCUR_READ_ONLY;
 import static java.sql.ResultSet.TYPE_FORWARD_ONLY;
@@ -40,7 +40,7 @@ import org.slf4j.MDC;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Repository;
 
-import blocking.repository.ConversationCursor.Direction;
+import async.repository.ConversationCursor.Direction;
 import domain.Conversation;
 import domain.Message;
 import domain.User;
@@ -88,7 +88,8 @@ public class ConversationRepository {
         }
     }
 
-    public Message findMessage(final UUID conversationId, final int messageId) { // FIXME should first param be domain object?
+    public Message findMessage(final UUID conversationId, final int messageId) {
+        // FIXME should first param be domain object?
         try (var connection = getDataSource().getConnection()) {
             connection.setReadOnly(true);
             try (var statement = connection.prepareStatement(
@@ -119,12 +120,12 @@ public class ConversationRepository {
     }
 
     public Conversation findConversation(final UUID id) {
-        try (var connection = getDataSource().getConnection()) {
-            return findConversation(connection, id );
-        } catch (final SQLException e) {
-            logger.error(e.getMessage(), e);
-            throw new RuntimeException(e.getMessage(), e);
-        }
+            try (var connection = getDataSource().getConnection()) {
+                return findConversation(connection, id);
+            } catch (final SQLException e) {
+                logger.error(e.getMessage(), e);
+                throw new RuntimeException(e.getMessage(), e);
+            }
     }
 
     public Conversation findOrCreateConversation(final User firstParticipant, final User secondParticipant) {
@@ -133,7 +134,6 @@ public class ConversationRepository {
         final var compositeId = firstParticipantId.compareTo(secondParticipantId) < 0
                 ? composeIds(firstParticipantId, secondParticipantId)
                 : composeIds(secondParticipantId, firstParticipantId);
-
         try (var connection = getDataSource().getConnection()) {
             connection.setAutoCommit(false);
             connection.setTransactionIsolation(Connection.TRANSACTION_READ_COMMITTED);
@@ -148,12 +148,11 @@ public class ConversationRepository {
             } finally {
                 lock.unlockRead(readStamp);
             }
-            final long writeStamp = lock.writeLock();
-
+            final var writeStamp = lock.writeLock();
             try {
                 // check for the conversation again just in case another thread created
                 // it after we released the read lock and before we acquired the write
-                // lock 
+                // lock
                 final var conversation = findConversation(connection, compositeId);
                 if (conversation != null) {
                     return conversation;
@@ -200,7 +199,8 @@ public class ConversationRepository {
         }
     }
 
-    public List<Conversation> findConversations(final User user, final int limit, final ConversationCursor cursor) {
+    public List<Conversation> findConversations(final User user, final int limit,
+            final ConversationCursor cursor) {
         Objects.requireNonNull(user, "user cannot be null");
         Objects.requireNonNull(cursor, "cursor cannot be null");
         if (limit < 0) {
@@ -245,9 +245,7 @@ public class ConversationRepository {
     public Message findMessage(final User sender, final User recipient, final int id) {
         final var senderId = sender.getId();
         final var recipientId = recipient.getId();
-        final var conversationId =
-                senderId.compareTo(recipientId) < 0
-                ? composeIds(senderId, recipientId)
+        final var conversationId = senderId.compareTo(recipientId) < 0 ? composeIds(senderId, recipientId)
                 : composeIds(recipientId, senderId);
         try (var connection = getDataSource().getConnection()) {
             try (var statement = connection.prepareStatement(
@@ -277,7 +275,7 @@ public class ConversationRepository {
     public Message createMessage(final Conversation conversation, final Message message) {
         try (var connection = getDataSource().getConnection()) {
             connection.setAutoCommit(false);
-            connection.setTransactionIsolation(Connection.TRANSACTION_REPEATABLE_READ);
+            connection.setTransactionIsolation(Connection.TRANSACTION_READ_COMMITTED);
 
             final var messageId = getAndIncrementMessageId(connection, conversation);
             message.setId(messageId);
@@ -306,29 +304,25 @@ public class ConversationRepository {
     protected int getAndIncrementMessageId(final Connection connection, final Conversation conversation)
             throws SQLException {
         final var lock = lockFactory.getLock(conversation.getId());
-        long stamp = lock.writeLock();
+        final var stamp = lock.writeLock();
         try {
-            try (var statement = connection.prepareStatement("SELECT id, next_message_id FROM Conversation WHERE id=?;",
-                    ResultSet.TYPE_FORWARD_ONLY, ResultSet.CONCUR_UPDATABLE)) {
+            final var query = "UPDATE Conversation SET next_message_id=next_message_id + 1 WHERE id=? RETURNING next_message_id - 1 AS current, next_message_id AS next;";
+            try (var statement = connection.prepareStatement(query, ResultSet.TYPE_FORWARD_ONLY,
+                    ResultSet.CONCUR_READ_ONLY)) {
                 statement.setObject(1, conversation.getId());
                 try (var resultSet = statement.executeQuery()) {
                     if (!resultSet.next()) {
-                        connection.rollback();
-                        throw new IllegalArgumentException("Conversation not found: " + conversation.getId());
+                        throw new IllegalArgumentException("Cannot find conversation with id: " + conversation.getId());
                     }
-                    final var retval = resultSet.getInt("next_message_id");
-                    final int nextMessageId = retval + 1;
-                    resultSet.updateInt("next_message_id", nextMessageId);
-                    resultSet.updateRow();
+                    final var retval = resultSet.getInt("current");
+                    final var next = resultSet.getInt("next");
                     if (resultSet.next()) {
-                        connection.rollback();
                         throw new IllegalStateException(
-                                "Multiple conversations found with id: " + conversation.getId());
+                                "Multiple matching conversations found for id: " + conversation.getId());
                     }
-                    // release lock so other processes can query the table, may create holes
-                    // in the sequence if subsequent commands fail
+                    // release lock so other processes can query the table
                     connection.commit();
-                    conversation.setNextMessageId(nextMessageId);
+                    conversation.setNextMessageId(next);
                     return retval;
                 }
             }
