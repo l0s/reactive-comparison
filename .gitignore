@@ -3,3 +3,4 @@
 **/target
 **/.classpath
 **/test-output
+.Rproj.user

@@ -15,19 +15,17 @@
  */
 package async.rest;
 
-import static async.repository.ConversationCursor.Direction.AFTER;
-import static async.repository.ConversationCursor.Direction.BEFORE;
 import static org.springframework.hateoas.server.mvc.WebMvcLinkBuilder.linkTo;
 import static org.springframework.hateoas.server.mvc.WebMvcLinkBuilder.methodOn;
+import static repository.Direction.AFTER;
+import static repository.Direction.BEFORE;
 
 import java.nio.charset.Charset;
 import java.time.Clock;
 import java.time.OffsetDateTime;
-import java.util.ArrayList;
 import java.util.Base64;
 import java.util.Base64.Decoder;
 import java.util.Base64.Encoder;
-import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.Callable;
@@ -36,7 +34,6 @@ import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.hateoas.RepresentationModel;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -44,10 +41,13 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
-import async.repository.ConversationCursor;
 import async.repository.ConversationRepository;
 import async.repository.UserRepository;
 import domain.Message;
+import dto.ConversationDto;
+import dto.ConversationListDto;
+import dto.MessageListDto;
+import repository.ConversationCursor;
 
 @RestController
 @RequestMapping("/conversations")
@@ -128,30 +128,6 @@ public class ConversationsController {
         };
     }
 
-    public static class ConversationDto extends RepresentationModel<ConversationDto> {
-        private String id;
-
-        public String getId() {
-            return id;
-        }
-
-        public void setId(final String id) {
-            this.id = id;
-        }
-    }
-
-    public static class ConversationListDto extends RepresentationModel<ConversationListDto> {
-        private List<ConversationDto> conversations = new ArrayList<>();
-
-        public List<ConversationDto> getConversations() {
-            return conversations;
-        }
-
-        public void setConversations(List<ConversationDto> conversations) {
-            this.conversations = conversations;
-        }
-    }
-
     @GetMapping("/{conversationId}/messages/{id}")
     public Callable<ResponseEntity<Message>> getMessage(@PathVariable final String conversationId,
             @PathVariable final int id) {
@@ -207,19 +183,6 @@ public class ConversationsController {
             dto.add(linkTo(methodOn(getClass()).getMessages(conversationId, limit, cursor)).withRel("self"));
             return ResponseEntity.ok(dto);
         };
-    }
-
-    public static class MessageListDto extends RepresentationModel<MessageListDto> {
-        private List<Message> messages;
-
-        public List<Message> getMessages() {
-            return messages;
-        }
-
-        public void setMessages(final List<Message> messages) {
-            Objects.requireNonNull(messages);
-            this.messages = messages;
-        }
     }
 
     public Callable<ResponseEntity<Void>> sendMessage(final String fromId, final String toId, final String body) {

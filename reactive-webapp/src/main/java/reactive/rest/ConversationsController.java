@@ -17,17 +17,15 @@ package reactive.rest;
 
 import static org.springframework.hateoas.server.reactive.WebFluxLinkBuilder.linkTo;
 import static org.springframework.hateoas.server.reactive.WebFluxLinkBuilder.methodOn;
-import static reactive.repository.ConversationCursor.Direction.AFTER;
-import static reactive.repository.ConversationCursor.Direction.BEFORE;
+import static repository.Direction.AFTER;
+import static repository.Direction.BEFORE;
 
 import java.nio.charset.Charset;
 import java.time.Clock;
 import java.time.OffsetDateTime;
-import java.util.ArrayList;
 import java.util.Base64;
 import java.util.Base64.Decoder;
 import java.util.Base64.Encoder;
-import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
@@ -37,7 +35,6 @@ import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.hateoas.RepresentationModel;
 import org.springframework.hateoas.server.reactive.WebFluxLinkBuilder.WebFluxLink;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -50,12 +47,15 @@ import org.springframework.web.bind.annotation.RestController;
 
 import domain.Conversation;
 import domain.Message;
-import reactive.repository.ConversationCursor;
-import reactive.repository.ConversationCursor.Direction;
+import dto.ConversationDto;
+import dto.ConversationListDto;
+import dto.MessageListDto;
 import reactive.repository.ConversationRepository;
 import reactive.repository.UserRepository;
 import reactor.core.publisher.Mono;
 import reactor.core.publisher.SynchronousSink;
+import repository.ConversationCursor;
+import repository.Direction;
 
 @RestController
 @RequestMapping("/conversations")
@@ -137,30 +137,6 @@ public class ConversationsController {
             .switchIfEmpty(Mono.just(ResponseEntity.status(HttpStatus.NOT_FOUND).body((ConversationListDto) null)));
     }
 
-    public static class ConversationDto extends RepresentationModel<ConversationDto> {
-        private String id;
-
-        public String getId() {
-            return id;
-        }
-
-        public void setId(final String id) {
-            this.id = id;
-        }
-    }
-
-    public static class ConversationListDto extends RepresentationModel<ConversationListDto> {
-        private List<ConversationDto> conversations = new ArrayList<>();
-
-        public List<ConversationDto> getConversations() {
-            return conversations;
-        }
-
-        public void setConversations(List<ConversationDto> conversations) {
-            this.conversations = conversations;
-        }
-    }
-
     @GetMapping("/{conversationId}/messages/{id}")
     public Mono<ResponseEntity<Message>> getMessage(@PathVariable final String conversationId,
             @PathVariable final int id) {
@@ -192,7 +168,7 @@ public class ConversationsController {
                     .collectList()
                     .map(messages -> {
                         final var dto = new MessageListDto();
-                        dto.messages = messages;
+                        dto.setMessages(messages);
                         // add links
                         final var links = new LinkedBlockingQueue<WebFluxLink>();
                         if (!messages.isEmpty()) {
@@ -214,19 +190,6 @@ public class ConversationsController {
                      });
         })
         .switchIfEmpty(emptyHandler);
-    }
-
-    public static class MessageListDto extends RepresentationModel<MessageListDto> {
-        private List<Message> messages;
-
-        public List<Message> getMessages() {
-            return messages;
-        }
-
-        public void setMessages(final List<Message> messages) {
-            Objects.requireNonNull(messages);
-            this.messages = messages;
-        }
     }
 
     public Mono<ResponseEntity<Void>> sendMessage(final String fromId, final String toId, final String body) {

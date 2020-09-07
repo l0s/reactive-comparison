@@ -15,12 +15,7 @@
  */
 package integrationtest;
 
-import java.time.Duration;
-import java.util.Collection;
-import java.util.Map;
 import java.util.Objects;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.function.Function;
 
 import org.springframework.context.ConfigurableApplicationContext;
@@ -32,20 +27,19 @@ import reactive.ReactiveDemoApplication;
 enum Paradigm {
 
     /**
-     * Netty + Spring WebFlux + Project Reactor
+     * Netty + Spring WebFlux (blocking)
      */
-    REACTIVE(ReactiveDemoApplication::run),
+    BLOCKING(BlockingDemoApplication::run),
     /**
-     * Tomcat + Sring Web (async)
+     * Undertow + Sring Web (async servlet)
      */
     ASYNC(AsyncDemoApplication::run),
     /**
-     * Netty + Spring WebFlux (blocking)
+     * Netty + Spring WebFlux + Project Reactor
      */
-    BLOCKING(BlockingDemoApplication::run);
+    REACTIVE(ReactiveDemoApplication::run),
+    ;
 
-    private final Map<TimingMetric, Collection<Duration>> durations = new ConcurrentHashMap<>();
-    private final Map<CountMetric, Collection<Double>> counts = new ConcurrentHashMap<>();
     private final Function<String[], ConfigurableApplicationContext> mainMethod;
 
     private Paradigm(final Function<String[], ConfigurableApplicationContext> mainMethod) {
@@ -55,41 +49,6 @@ enum Paradigm {
 
     public ConfigurableApplicationContext run(final String... arguments) {
         return mainMethod.apply(arguments);
-    }
-
-    public void logDuration(final TimingMetric metric, final Duration duration) {
-        final var bucket = durations.computeIfAbsent(metric, key -> new ConcurrentLinkedQueue<>());
-        bucket.add(duration);
-    }
-
-    public Duration getAverageDuration(final TimingMetric metric) {
-        final var bucket = durations.get(metric);
-        if (bucket == null || bucket.isEmpty()) {
-            return null;
-        }
-        var total = Duration.ZERO;
-        for (final var duration : bucket) {
-            total = total.plus(duration);
-        }
-        return total.dividedBy(bucket.size());
-    }
-
-    public void logThroughput(final CountMetric metric, final long transactions, final Duration limit) {
-        final var bucket = counts.computeIfAbsent(metric, key -> new ConcurrentLinkedQueue<>());
-        final double throughput = (double)transactions / limit.toSeconds();
-        bucket.add(throughput);
-    }
-
-    public Float getThroughput(CountMetric metric) {
-        final var bucket = counts.get(metric);
-        if (bucket == null || bucket.isEmpty()) {
-            return null;
-        }
-        var total = 0.0f;
-        for (final var count : bucket) {
-            total += count;
-        }
-        return total / bucket.size();
     }
 
 }

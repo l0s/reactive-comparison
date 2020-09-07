@@ -22,8 +22,11 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.DynamicContainer.dynamicContainer;
 import static org.junit.jupiter.api.DynamicTest.dynamicTest;
 
+import java.io.File;
+import java.io.FileNotFoundException;
 import java.io.IOException;
-import java.net.MalformedURLException;
+import java.io.PrintWriter;
+import java.io.UnsupportedEncodingException;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.net.URL;
@@ -31,15 +34,19 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpRequest.BodyPublishers;
 import java.net.http.HttpResponse.BodyHandlers;
+import java.net.http.HttpTimeoutException;
 import java.time.Duration;
 import java.time.Instant;
+import java.time.temporal.Temporal;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collection;
 import java.util.Optional;
 import java.util.Random;
 import java.util.UUID;
-import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
@@ -54,32 +61,54 @@ import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DynamicNode;
 import org.junit.jupiter.api.TestFactory;
-import org.junit.jupiter.api.TestReporter;
 import org.junit.jupiter.api.parallel.Execution;
 import org.junit.jupiter.api.parallel.ExecutionMode;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.boot.SpringApplication;
 import org.testcontainers.containers.PostgreSQLContainer;
-import org.testcontainers.junit.jupiter.Testcontainers;
 
 import net.bytebuddy.utility.RandomString;
 
-@Testcontainers
 @Execution(ExecutionMode.SAME_THREAD)
 public class ComparisonIT {
 
-    private static final int serverThreadCount = 4;
-    // set this to the point that Tomcat requests can complete in 2s
-    private static final int maxConnections = serverThreadCount * 8;
+    private static final Logger logger = LoggerFactory.getLogger(ComparisonIT.class);
 
-    private final Logger logger = LoggerFactory.getLogger(getClass());
+    /*
+     * Server settings
+     */
+    private static final int serverThreadCount = 6;
+    private static final int maxConnections = 8; // with < 32 connections, Tomcat takes 3.5m to create a single user :-/
+    private static final int databasePoolSize = 4;
+    private static final int databaseDefaultFetchSize = 11;
 
+    /*
+     * Reporting Output
+     */ 
+    private static final File latencyReport = new File("latency.tsv");
+    private static final File throughputReport = new File("throughput.tsv");
+
+    private static ExecutorService latencyQueue;
+    private static PrintWriter latencyOutput;
+    private static ExecutorService throughputQueue;
+    private static PrintWriter throughputOutput;
+
+    /*
+     * Client settings
+     */
+    private static final int clientDefaultPageSize = 13; // Force (REST) page size and (DB) fetch size mismatch
+    private static final ExecutorService httpExecutor = Executors.newFixedThreadPool((int)(maxConnections * 1.3));
     private final Random random = new Random();
     private final String baseUrl = "http://localhost:" + 8080;
-    private final HttpClient client = HttpClient.newHttpClient();
+    private final HttpClient client =
+            HttpClient.newBuilder()
+            .executor(httpExecutor)
+            .build();
 
-    private final int userCount = 32;
-    private final int messageCount = 4096;
+    private final Duration throughputTestDuration = Duration.ofSeconds(15);
+    private final int userCount = 64; // decreasing this value increases contention
+    private final int messageCount = 2048;
 
     @BeforeAll
     public static void setEnvironmentProperties() {
@@ -92,45 +121,45 @@ public class ComparisonIT {
         System.setProperty("server.tomcat.min-spare-threads", "" + serverThreadCount);
         System.setProperty("server.tomcat.max-connections", "" + maxConnections);
 
+        // Undertow Configuration
+        System.setProperty("server.undertow.worker-threads", "" + serverThreadCount);
+        System.setProperty("server.undertow.io-threads", "" + maxConnections);
+
         // Spring HATEOAS Configuration
         System.setProperty("spring.hateoas.use-hal-as-default-json-media-type", "true");
     }
 
-    @AfterAll
-    public static void reportTiming(final TestReporter reporter) {
-        for (final var metric : TimingMetric.values()) {
-            reporter.publishEntry(metric.name());
-            for (final var paradigm : Paradigm.values()) {
-                final var average = paradigm.getAverageDuration(metric);
-                reporter.publishEntry(paradigm.name(), "" + average);
-            }
-        }
+    @BeforeAll
+    public static void setUpOutput() throws FileNotFoundException, UnsupportedEncodingException {
+        latencyQueue = Executors.newSingleThreadExecutor();
+        latencyOutput = new PrintWriter(latencyReport, "UTF-8");
+        throughputQueue = Executors.newSingleThreadExecutor();
+        throughputOutput = new PrintWriter(throughputReport, "UTF-8");
     }
 
     @AfterAll
-    public static void reportThroughput(final TestReporter reporter) {
-        for (final var metric : CountMetric.values()) {
-            reporter.publishEntry(metric.name());
-            for (final var paradigm : Paradigm.values()) {
-                reporter.publishEntry(paradigm.name(), paradigm.getThroughput(metric) + " requests/second");
-            }
-        }
+    public static void closeOutput() throws InterruptedException {
+        latencyQueue.shutdown();
+        throughputQueue.shutdown();
+
+        latencyQueue.awaitTermination(2, TimeUnit.SECONDS);
+        latencyOutput.flush();
+        latencyOutput.close();
+
+        throughputQueue.awaitTermination(2, TimeUnit.SECONDS);
+        throughputOutput.flush();
+        throughputOutput.close();
+    }
+
+    @AfterAll
+    public static void shutdownExecutor() throws InterruptedException {
+        httpExecutor.shutdown();
+        httpExecutor.awaitTermination(2, TimeUnit.SECONDS);
     }
 
     @TestFactory
-    public Stream<DynamicNode> testContainers(final TestReporter reporter) {
-        reporter.publishEntry("generating dynamic nodes");
-
-        // Due to JVM optimisation, the first paradigm to execute will be at a
-        // disadvantage
-        return Stream.of(
-                Paradigm.ASYNC,
-                Paradigm.REACTIVE,
-                Paradigm.BLOCKING,
-                Paradigm.ASYNC,
-                Paradigm.REACTIVE,
-                Paradigm.BLOCKING
-                )
+    public Stream<DynamicNode> paradigmContainers() {
+        return Arrays.stream(Paradigm.values())
             .map(paradigm -> {
 
                 @SuppressWarnings({ "rawtypes", "resource" }) // last test closes the database
@@ -146,7 +175,8 @@ public class ComparisonIT {
                     "--database.url=" + database.getJdbcUrl(),
                     "--database.username=" + database.getUsername(),
                     "--database.password=" + database.getPassword(),
-                    "--database.maximumPoolSize=8",
+                    "--database.maximumPoolSize=" + databasePoolSize,
+                    "--database.defaultFetchSize=" + databaseDefaultFetchSize,
                     "--conversationRepository.shardConversationMutations=false",
                     "--conversationRepository.conversationThreads=" + serverThreadCount,
                     "--executor.threadPoolSize=" + serverThreadCount);
@@ -155,23 +185,40 @@ public class ComparisonIT {
                 final var userUrls = new ConcurrentLinkedQueue<URL>();
 
                 return dynamicContainer("paradigm: " + paradigm, Stream.of(
+                    /*
+                     * smoke tests
+                     */
                     dynamicTest("context is active", () -> assertTrue(context.isActive())),
                     dynamicTest("context is running", () -> assertTrue(context.isRunning())),
+
+                    /*
+                     * warm up
+                     */
                     dynamicTest("no users returned", this::verifyEmpty),
-                    dynamicTest("can create users", () -> benchmarkUserCreationLatency(paradigm, userUrls::addAll)),
-                    dynamicTest("can paginate through users", () -> benchmarkUserPaginationLatency(paradigm, userUrls, userIds::add)),
-                    dynamicTest("can send messages", () -> benchmarkSendingAndReceivingLatency(paradigm, userIds)),
-                    dynamicTest("can sustain message sending", () -> benchmarkSendingThroughput(paradigm, userIds)),
-                    dynamicTest("can sustain retrieving message", () -> benchmarkRetrievalThroughput(paradigm, userIds)),
-                    dynamicTest("close context", context::close),
+
+                    /*
+                     * benchmarks
+                     */
+                    dynamicTest("benchmark user creation", () -> benchmarkUserCreationLatency(paradigm, userUrls::addAll)),
+                    dynamicTest("benchmark user pagination", () -> benchmarkUserPaginationLatency(paradigm, userUrls, userIds::add)),
+                    dynamicTest("benchmark sending and receiving latency", () -> benchmarkSendingAndReceivingLatency(paradigm, userIds)),
+                    dynamicTest("benchmark message sending throughput", () -> benchmarkSendingThroughput(paradigm, userIds)),
+                    dynamicTest("benchmark message retrieval throughput", () -> benchmarkRetrievalThroughput(paradigm, userIds)),
+
+                    /*
+                     * clean up
+                     */
+                    dynamicTest("close context", () -> SpringApplication.exit(context)),
                     dynamicTest("close database", database::stop)));
             });
     }
 
     /**
-     * Verify that given an empty database, the API returns an array of zero users.
+     * Verify that given an empty database, the API returns an array of zero
+     * users. This is a cursory test to ensure that all layers of the
+     * application are functioning properly.
      */
-    protected final void verifyEmpty() throws IOException, InterruptedException, URISyntaxException {
+    protected void verifyEmpty() throws IOException, InterruptedException, URISyntaxException {
         // given
         final var baseUrl = this.baseUrl + "/users/";
         final var request = HttpRequest.newBuilder(new URI(baseUrl)).GET().build();
@@ -195,41 +242,38 @@ public class ComparisonIT {
      * @param sink     destination for all of the user URLs generated
      */
     protected void benchmarkUserCreationLatency(final Paradigm paradigm, final Consumer<? super Collection<? extends URL>> sink) {
-        final var baseUrl = this.baseUrl + "/users/";
+        
         final var startTime = Instant.now();
         final var urls = IntStream.range(0, userCount)
             .parallel()
-            .mapToObj(i -> {
-                final var uri =  URI.create(baseUrl);
-                final var bodyPublisher = BodyPublishers.ofString("{\"name\":\"user_" + i + "\"}");
-                return HttpRequest.newBuilder(uri)
-                    .timeout(Duration.ofSeconds(2))
-                    .POST(bodyPublisher)
-                    .header("Content-Type", "application/json")
-                    .build();
-            })
-            .map(request -> {
-                final var start = Instant.now();
-                return client.sendAsync(request, BodyHandlers.discarding())
-                    .whenComplete((response, error) -> paradigm.logDuration(TimingMetric.CREATE_SINGLE_USER,
-                            Duration.between(start, Instant.now())));
-            })
-            .map(CompletableFuture::join)
-            .map(response -> {
-                assertEquals(201, response.statusCode());
-                return response.headers().firstValue("Location").get();
-            })
-            .map(urlString -> {
-                try {
-                    return new URL(urlString);
-                } catch (final MalformedURLException mue) {
-                    logger.error(mue.getMessage(), mue);
-                    throw new RuntimeException(mue.getMessage(), mue);
-                }
-            })
+            .mapToObj(i -> createUser(paradigm, i))
             .collect(Collectors.toSet());
-        paradigm.logDuration(TimingMetric.CREATE_ALL_USERS, Duration.between(startTime, Instant.now()));
+        logLatency(paradigm, TimingMetric.CREATE_ALL_USERS, Duration.between(startTime, Instant.now()));
         sink.accept(urls);
+    }
+
+    protected URL createUser(final Paradigm paradigm, final Object usernameSuffix) {
+        final var baseUrl = this.baseUrl + "/users/";
+        final var uri =  URI.create(baseUrl);
+        final var bodyPublisher = BodyPublishers.ofString("{\"name\":\"user_" + usernameSuffix + "\"}");
+        final var request = HttpRequest.newBuilder(uri)
+            .POST(bodyPublisher)
+            .header("Content-Type", "application/json")
+            .build();
+
+        final var start = Instant.now();
+        try {
+            final var response = client.send(request, BodyHandlers.discarding());
+            logLatency(paradigm, TimingMetric.CREATE_SINGLE_USER, Duration.between(start, Instant.now()));
+            assertEquals(201, response.statusCode());
+
+            final var urlString = response.headers().firstValue("Location").get();
+
+            return new URL(urlString);
+        } catch (final IOException | InterruptedException e) {
+            logger.error(e.getMessage(), e);
+            throw new RuntimeException(e.getMessage(), e);
+        }
     }
 
     /**
@@ -248,20 +292,23 @@ public class ComparisonIT {
 
         // when
         var count = 0;
-        Optional<URI> next = Optional.of(new URI(baseUrl + "?pageNum=0&pageSize=13"));
+        Optional<URI> next = Optional.of(new URI(baseUrl + "?pageNum=0&pageSize=" + clientDefaultPageSize));
         while (next.isPresent()) {
-            final var request = HttpRequest.newBuilder(next.get()).GET().build();
+            final var request = HttpRequest
+                .newBuilder(next.get())
+                .GET()
+                .build();
             final var start = Instant.now();
             final var response = client.send(request, new JsonNodeBodyHandler());
-            paradigm.logDuration(TimingMetric.GET_PAGE_OF_USERS, Duration.between(start, Instant.now()));
+            logLatency(paradigm, TimingMetric.GET_PAGE_OF_USERS, Duration.between(start, Instant.now()));
             assertEquals(200, response.statusCode());
-            var root = response.body();
+            final var root = response.body();
             assertTrue(root.isArray());
             count += root.size();
             for (final var user : root) {
                 final var id = user.get("id").asText();
                 final var userUrl = new URL(baseUrl + id.toString());
-                assertTrue(urls.contains(userUrl));
+                assertTrue(urls.contains(userUrl), "unexpected url: " + userUrl);
                 userIdSink.accept(UUID.fromString(id));
             }
             next = getNextUrl(response.headers().allValues("Link"));
@@ -269,12 +316,12 @@ public class ComparisonIT {
 
         // then
         assertEquals(urls.size(), count);
-        paradigm.logDuration(TimingMetric.PAGE_THROUGH_ALL_USERS, Duration.between(startTime, Instant.now()));
+        logLatency(paradigm, TimingMetric.PAGE_THROUGH_ALL_USERS, Duration.between(startTime, Instant.now()));
     }
 
     /**
      * Simulate sending and receiving {@link #messageCount} messages between
-     * users in the system. Concurrency is determined by the JVM.
+     * users in the system.
      *
      * @param paradigm the type of application backing the API
      * @param userIds  the user IDs in the system
@@ -302,25 +349,18 @@ public class ComparisonIT {
             // prepare a message
             final var bodyPublisher = BodyPublishers.ofString(RandomString.make(8192));
             try {
-                return HttpRequest.newBuilder(new URI(baseUrl + "/users/" + senderId + "/messages/outgoing/"
+                var request = HttpRequest.newBuilder(new URI(baseUrl + "/users/" + senderId + "/messages/outgoing/"
                         + recipientId))
-                        .POST(bodyPublisher).build();
-            } catch (final URISyntaxException e) {
-                logger.error(e.getMessage(), e);
-                throw new RuntimeException(e.getMessage(), e);
-            }
-        })
-        // when
-        .map(request -> {
-            // send the message asynchronously
-            final var start = Instant.now();
-            return client.sendAsync(request, responseBodyHandler).whenComplete((response, error) -> paradigm
-                    .logDuration(TimingMetric.SEND_SINGLE_MESSAGE, Duration.between(start, Instant.now())));
-        })
-        // then
-        .map(future -> {
-            return future.thenApplyAsync(response -> {
+                        .POST(bodyPublisher)
+                        .build();
+
+                // when
+                var start = Instant.now();
+
+                var response = client.send(request, responseBodyHandler);
+                var end = Instant.now();
                 assertEquals(201, response.statusCode());
+                logLatency(paradigm, TimingMetric.SEND_SINGLE_MESSAGE, Duration.between(start, end));
 
                 // each message prompts the recipient to open their client and load the
                 // latest messages
@@ -328,21 +368,22 @@ public class ComparisonIT {
                 final var messageUrl = response.headers().firstValue("Location").get();
                 final var messagesUrl = pattern.matcher(messageUrl).replaceFirst("messages");
 
-                try {
-                    final var request = HttpRequest.newBuilder(new URI(messagesUrl)).GET().build();
-                    final var start = Instant.now();
-                    return client.sendAsync(request, responseBodyHandler).whenComplete((_response, _error) -> paradigm
-                            .logDuration(TimingMetric.GET_MESSAGES_FOR_USER, Duration.between(start, Instant.now())));
-                } catch (final URISyntaxException e) {
-                    logger.error(e.getMessage(), e);
-                    throw new RuntimeException(e.getMessage(), e);
-                }
-            });
+                request = HttpRequest.newBuilder(new URI(messagesUrl))
+                        .GET()
+                        .build();
+                start = Instant.now();
+                response = client.send(request, responseBodyHandler);
+                logLatency(paradigm, TimingMetric.GET_MESSAGES_FOR_USER, Duration.between(start, Instant.now()));
+
+                return response;
+            } catch( final IOException | InterruptedException | URISyntaxException e ) {
+                logger.error("Error with paradigm: " + paradigm + ": " + e.getMessage(), e);
+                throw new RuntimeException("Error with paradigm: " + paradigm + ": " + e.getMessage(), e);
+            }
         })
-        .map(CompletableFuture::join)
-        .map(CompletableFuture::join)
+        // then
         .forEach(response -> {
-            assertEquals(200, response.statusCode());
+            assertEquals(200, response.statusCode(), response.toString());
             final var root = response.body();
             final var messages = root.get("messages");
             assertTrue(root.has("messages"), "missing messages field: " + root);
@@ -354,28 +395,26 @@ public class ComparisonIT {
             assertFalse(links.isNull(), "_links object is null");
             assertFalse(links.isEmpty(), "_links array is empty");
         });
-        paradigm.logDuration(TimingMetric.SEND_RECEIVE_ALL_MESSAGES, Duration.between(startTime, Instant.now()));
+        logLatency(paradigm, TimingMetric.SEND_RECEIVE_ALL_MESSAGES, Duration.between(startTime, Instant.now()));
     }
 
     /**
-     * Send as many messages as possible within 15 seconds.
+     * Send as many messages as possible within {@link #throughputTestDuration}.
      *
      * @param paradigm receives the throughput result
      * @param userIds all of the user IDs in the system
+     * @throws InterruptedException 
      */
-    protected void benchmarkSendingThroughput(final Paradigm paradigm, final Collection<? extends UUID> userIds) {
+    protected void benchmarkSendingThroughput(final Paradigm paradigm, final Collection<? extends UUID> userIds) throws InterruptedException {
         // given
         assumeTrue(userIds.size() > 0);
         final var userIdList = new ArrayList<>(userIds);
-        final var limit = Duration.ofSeconds(15);
-        final var deadline = Instant.now().plus(limit);
+        final var deadline = Instant.now().plus(throughputTestDuration);
 
         final var responseBodyHandler = new JsonNodeBodyHandler();
         final var executor = new ThreadPoolExecutor(maxConnections * 2, maxConnections * 2, 15, TimeUnit.SECONDS,
                 new LinkedBlockingQueue<Runnable>());
         final var counter = new LongAdder();
-
-        // TODO warm up the server
 
         // when
         while (Instant.now().isBefore(deadline)) {
@@ -398,52 +437,63 @@ public class ComparisonIT {
                 try {
                     final var request = HttpRequest
                             .newBuilder(new URI(baseUrl + "/users/" + senderId + "/messages/outgoing/" + recipientId))
-                            .POST(bodyPublisher).build();
+                            .timeout(Duration.between(Instant.now(), deadline))
+                            .POST(bodyPublisher)
+                            .build();
                     final var response = client.send(request, responseBodyHandler);
-                    if (Instant.now().isBefore(deadline) && response.statusCode() >= 200
-                            && response.statusCode() < 300) {
+                    if (Instant.now().isBefore(deadline) && response.statusCode() == 201) {
                         counter.increment();
+                    } else {
+                        logger.warn("Not counting error response for paradigm: " + paradigm + ": " + response);
                     }
-                } catch (final InterruptedException ie) {
+                } catch (final HttpTimeoutException | InterruptedException e) {
+                    // exceeded time limit
                     return;
+                } catch (final IllegalArgumentException iae) {
+                    if (iae.getMessage().startsWith("Invalid duration: PT-")) {
+                        // exceeded time limit
+                        return;
+                    }
+                    logger.error("Error with paradigm: " + paradigm + ": " + iae.getMessage(), iae);
+                    throw iae;
                 } catch (final URISyntaxException | IOException e) {
-                    logger.error(e.getMessage(), e);
-                    throw new RuntimeException(e.getMessage(), e);
+                    logger.error("Error with paradigm: " + paradigm + ": " + e.getMessage(), e);
+                    throw new RuntimeException("Error with paradigm: " + paradigm + ": " + e.getMessage(), e);
                 }
             });
         }
         executor.shutdown();
         executor.shutdownNow();
+        executor.awaitTermination(2, TimeUnit.SECONDS);
 
         // then
-        paradigm.logThroughput(CountMetric.SENT_MESSAGES, counter.sum(), limit);
+        logThroughput(paradigm, CountMetric.SENT_MESSAGES, counter.sum(), throughputTestDuration);
     }
 
     /**
-     * Retrieve as many messages as possible within 15 seconds. Each
+     * Retrieve as many messages as possible within {@link #throughputTestDuration}. Each
      * operation is actually three HTTP calls and the operation is only
      * counted if all three calls complete before time runs out.
      * 
      * @param paradigm receives the throughput result
      * @param userIds  all of the user IDs in the system
+     * @throws InterruptedException 
      */
-    protected void benchmarkRetrievalThroughput(final Paradigm paradigm, final Collection<? extends UUID> userIds) {
+    protected void benchmarkRetrievalThroughput(final Paradigm paradigm, final Collection<? extends UUID> userIds) throws InterruptedException {
         // given
         assumeTrue(userIds.size() > 0);
         final var userIdList = new ArrayList<>(userIds);
-        final var limit = Duration.ofSeconds(15);
-        final var deadline = Instant.now().plus(limit);
+        final var deadline = Instant.now().plus(throughputTestDuration);
 
         final var responseBodyHandler = new JsonNodeBodyHandler();
         final var executor = new ThreadPoolExecutor(maxConnections * 2, maxConnections * 2, 15, TimeUnit.SECONDS,
                 new LinkedBlockingQueue<Runnable>());
         final var counter = new LongAdder();
 
-        // TODO warm up the server
-
         // when
-        for (int recipientIndex = random.nextInt(userIdList.size()); Instant.now()
-                .isBefore(deadline); recipientIndex = random.nextInt(userIdList.size())) {
+        for (int recipientIndex = random.nextInt(userIdList.size());
+                Instant.now().isBefore(deadline);
+                recipientIndex = random.nextInt(userIdList.size())) {
             final var recipientId = userIdList.get(recipientIndex);
             executor.execute(() -> {
                 if (Instant.now().isAfter(deadline)) {
@@ -451,25 +501,36 @@ public class ComparisonIT {
                 }
                 try {
                     // get all conversations for a user (first page)
-                    final var conversationUrl = getFirstConversationUrl(responseBodyHandler, recipientId);
+                    final var conversationUrl = getFirstConversationUrl(responseBodyHandler, recipientId, deadline);
 
                     // get the first conversation
-                    final var messagesUrl = getMessagesUrl(responseBodyHandler, conversationUrl);
+                    final var messagesUrl = getMessagesUrl(responseBodyHandler, conversationUrl, deadline);
 
                     // get all the messages for the first conversation (first page)
-                    final var messagesRequest = HttpRequest.newBuilder(new URI(messagesUrl)).GET().build();
+                    final var messagesRequest =
+                            HttpRequest.newBuilder(new URI(messagesUrl))
+                            .timeout(Duration.between(Instant.now(), deadline))
+                            .GET()
+                            .build();
                     final var messagesResponse = client.send(messagesRequest, responseBodyHandler);
                     final var messagesRoot = messagesResponse.body();
                     assertFalse(messagesRoot.isNull());
                     if (Instant.now().isBefore(deadline)) {
                         counter.increment();
                     }
-                } catch (final URISyntaxException | IOException e) {
-                    logger.error(e.getMessage(), e);
-                    throw new RuntimeException(e.getMessage(), e);
-                } catch (final InterruptedException e) {
+                } catch (final HttpTimeoutException | InterruptedException e) {
                     // exceeded time limit
                     return;
+                } catch (final IllegalArgumentException iae) {
+                    if (iae.getMessage().startsWith("Invalid duration: PT-")) {
+                        // exceeded time limit
+                        return;
+                    }
+                    logger.error("Error with paradigm: " + paradigm + ": " + iae.getMessage(), iae);
+                    throw iae;
+                } catch (final URISyntaxException | IOException e) {
+                    logger.error("Error with paradigm: " + paradigm + ": " + e.getMessage(), e);
+                    throw new RuntimeException("Error with paradigm: " + paradigm + ": " + e.getMessage(), e);
                 }
             });
         }
@@ -477,14 +538,19 @@ public class ComparisonIT {
         // then
         executor.shutdown();
         executor.shutdownNow();
+        executor.awaitTermination(2, TimeUnit.SECONDS);
 
         // then
-        paradigm.logThroughput(CountMetric.RETRIEVED_MESSAGES, counter.sum(), limit);
+        logThroughput(paradigm, CountMetric.RETRIEVED_MESSAGES, counter.sum(), throughputTestDuration);
     }
 
-    protected String getMessagesUrl(final JsonNodeBodyHandler responseBodyHandler, final String conversationUrl)
+    protected String getMessagesUrl(final JsonNodeBodyHandler responseBodyHandler, final String conversationUrl, final Temporal deadline)
             throws URISyntaxException, IOException, InterruptedException {
-        final var conversationRequest = HttpRequest.newBuilder(new URI(conversationUrl)).GET().build();
+        final var conversationRequest =
+                HttpRequest.newBuilder(new URI(conversationUrl))
+                .GET()
+                .timeout(Duration.between(Instant.now(), deadline))
+                .build();
         final var conversationResponse = client.send(conversationRequest, responseBodyHandler);
         final var conversationRoot = conversationResponse.body();
         final var conversationLinks = conversationRoot.get("_links");
@@ -496,10 +562,13 @@ public class ComparisonIT {
         return messagesPath;
     }
 
-    protected String getFirstConversationUrl(final JsonNodeBodyHandler responseBodyHandler, final UUID recipientId)
+    protected String getFirstConversationUrl(final JsonNodeBodyHandler responseBodyHandler, final UUID recipientId, final Temporal deadline)
             throws URISyntaxException, IOException, InterruptedException {
         final var conversationsRequest = HttpRequest
-                .newBuilder(new URI(baseUrl + "/users/" + recipientId + "/conversations")).GET().build();
+                .newBuilder(new URI(baseUrl + "/users/" + recipientId + "/conversations"))
+                .GET()
+                .timeout(Duration.between(Instant.now(), deadline))
+                .build();
         final var conversationsResponse = client.send(conversationsRequest, responseBodyHandler);
         final var conversationsRoot = conversationsResponse.body();
         assertTrue(conversationsRoot.has("conversations"), "missing conversations field: " + conversationsRoot);
@@ -526,6 +595,32 @@ public class ComparisonIT {
             }
         }
         return Optional.empty();
+    }
+
+    protected void logLatency(final Paradigm paradigm, final TimingMetric metric, final Duration duration) {
+        latencyQueue.execute(() -> {
+            latencyOutput.append(paradigm.name());
+            latencyOutput.append('\t');
+            latencyOutput.append(metric.name());
+            latencyOutput.append('\t');
+            latencyOutput.print(duration.toMillis());
+            latencyOutput.println();
+            latencyOutput.flush();
+        });
+    }
+
+    protected void logThroughput(Paradigm paradigm, CountMetric metric, long count, Duration duration) {
+        throughputQueue.execute(() -> {
+            throughputOutput.append(paradigm.name());
+            throughputOutput.append('\t');
+            throughputOutput.append(metric.name());
+            throughputOutput.append('\t');
+            throughputOutput.print(count);
+            throughputOutput.append('\t');
+            throughputOutput.print(duration.toMillis());
+            throughputOutput.println();
+            throughputOutput.flush();
+        });
     }
 
 }

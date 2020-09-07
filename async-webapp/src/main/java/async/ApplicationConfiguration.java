@@ -29,7 +29,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.aop.interceptor.AsyncUncaughtExceptionHandler;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.boot.web.embedded.tomcat.TomcatServletWebServerFactory;
+import org.springframework.boot.web.embedded.undertow.UndertowServletWebServerFactory;
 import org.springframework.boot.web.server.WebServerFactory;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.ComponentScan;
@@ -61,7 +61,13 @@ public class ApplicationConfiguration implements AsyncConfigurer {
 
     @Bean
     public WebServerFactory webServerFactory() {
-        return new TomcatServletWebServerFactory();
+        /*
+         * I'm observing weird latency issues with Tomcat when the max
+         * connection count is less than 32. For example, POST requests to
+         * create users were taking 3.5 minutes.
+         */
+        return new UndertowServletWebServerFactory();
+//        return new TomcatServletWebServerFactory();
     }
 
     public Executor getAsyncExecutor() {
@@ -84,7 +90,7 @@ public class ApplicationConfiguration implements AsyncConfigurer {
         return threadPoolSize;
     }
 
-    @Value("${executor.threadPoolSize}")
+    @Value("${executor.threadPoolSize:4}")
     public void setThreadPoolSize(final int threadPoolSize) {
         if (threadPoolSize < 1) {
             throw new IllegalArgumentException("Invalid therad pool size: " + threadPoolSize);

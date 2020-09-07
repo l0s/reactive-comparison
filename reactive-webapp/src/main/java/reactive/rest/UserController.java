@@ -36,8 +36,8 @@ import org.springframework.web.bind.annotation.RestController;
 
 import domain.Message;
 import domain.User;
+import dto.ConversationListDto;
 import reactive.repository.UserRepository;
-import reactive.rest.ConversationsController.ConversationListDto;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 

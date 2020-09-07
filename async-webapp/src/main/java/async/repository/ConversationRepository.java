@@ -40,10 +40,11 @@ import org.slf4j.MDC;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Repository;
 
-import async.repository.ConversationCursor.Direction;
 import domain.Conversation;
 import domain.Message;
 import domain.User;
+import repository.ConversationCursor;
+import repository.Direction;
 import sync.LockFactory;
 
 @Repository

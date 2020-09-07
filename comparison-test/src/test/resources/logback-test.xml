@@ -35,4 +35,5 @@
     <logger name="reactor" level="warn" />
     <logger name="com.zaxxer.hikari" level="info" />
     <logger name="org.springframework" level="info" />
+    <logger name="org.springframework.aop" level="warn" />
 </configuration>

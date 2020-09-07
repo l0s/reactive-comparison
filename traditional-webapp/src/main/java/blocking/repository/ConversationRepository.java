@@ -40,10 +40,11 @@ import org.slf4j.MDC;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Repository;
 
-import blocking.repository.ConversationCursor.Direction;
 import domain.Conversation;
 import domain.Message;
 import domain.User;
+import repository.ConversationCursor;
+import repository.Direction;
 import sync.LockFactory;
 
 @Repository
@@ -306,29 +307,25 @@ public class ConversationRepository {
     protected int getAndIncrementMessageId(final Connection connection, final Conversation conversation)
             throws SQLException {
         final var lock = lockFactory.getLock(conversation.getId());
-        long stamp = lock.writeLock();
+        final var stamp = lock.writeLock();
         try {
-            try (var statement = connection.prepareStatement("SELECT id, next_message_id FROM Conversation WHERE id=?;",
-                    ResultSet.TYPE_FORWARD_ONLY, ResultSet.CONCUR_UPDATABLE)) {
+            final var query = "UPDATE Conversation SET next_message_id=next_message_id + 1 WHERE id=? RETURNING next_message_id - 1 AS current, next_message_id AS next;";
+            try (var statement = connection.prepareStatement(query, ResultSet.TYPE_FORWARD_ONLY,
+                    ResultSet.CONCUR_READ_ONLY)) {
                 statement.setObject(1, conversation.getId());
                 try (var resultSet = statement.executeQuery()) {
                     if (!resultSet.next()) {
-                        connection.rollback();
-                        throw new IllegalArgumentException("Conversation not found: " + conversation.getId());
+                        throw new IllegalArgumentException("Cannot find conversation with id: " + conversation.getId());
                     }
-                    final var retval = resultSet.getInt("next_message_id");
-                    final int nextMessageId = retval + 1;
-                    resultSet.updateInt("next_message_id", nextMessageId);
-                    resultSet.updateRow();
+                    final var retval = resultSet.getInt("current");
+                    final var next = resultSet.getInt("next");
                     if (resultSet.next()) {
-                        connection.rollback();
                         throw new IllegalStateException(
-                                "Multiple conversations found with id: " + conversation.getId());
+                                "Multiple matching conversations found for id: " + conversation.getId());
                     }
-                    // release lock so other processes can query the table, may create holes
-                    // in the sequence if subsequent commands fail
+                    // release lock so other processes can query the table
                     connection.commit();
-                    conversation.setNextMessageId(nextMessageId);
+                    conversation.setNextMessageId(next);
                     return retval;
                 }
             }

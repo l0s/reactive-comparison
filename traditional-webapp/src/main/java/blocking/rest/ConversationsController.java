@@ -15,21 +15,19 @@
  */
 package blocking.rest;
 
-import static blocking.repository.ConversationCursor.Direction.AFTER;
-import static blocking.repository.ConversationCursor.Direction.BEFORE;
 import static org.springframework.hateoas.server.reactive.WebFluxLinkBuilder.linkTo;
 import static org.springframework.hateoas.server.reactive.WebFluxLinkBuilder.methodOn;
+import static repository.Direction.AFTER;
+import static repository.Direction.BEFORE;
 
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.nio.charset.Charset;
 import java.time.Clock;
 import java.time.OffsetDateTime;
-import java.util.ArrayList;
 import java.util.Base64;
 import java.util.Base64.Decoder;
 import java.util.Base64.Encoder;
-import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
 import java.util.stream.Collectors;
@@ -37,7 +35,6 @@ import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.hateoas.RepresentationModel;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.server.reactive.ServerHttpRequest;
@@ -47,11 +44,14 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
-import blocking.repository.ConversationCursor;
 import blocking.repository.ConversationRepository;
 import blocking.repository.UserRepository;
 import domain.Conversation;
 import domain.Message;
+import dto.ConversationDto;
+import dto.ConversationListDto;
+import dto.MessageListDto;
+import repository.ConversationCursor;
 
 @RestController
 @RequestMapping("/conversations")
@@ -128,30 +128,6 @@ public class ConversationsController {
         return ResponseEntity.ok(retval);
     }
 
-    public static class ConversationDto extends RepresentationModel<ConversationDto> {
-        private String id;
-
-        public String getId() {
-            return id;
-        }
-
-        public void setId(final String id) {
-            this.id = id;
-        }
-    }
-
-    public static class ConversationListDto extends RepresentationModel<ConversationListDto> {
-        private List<ConversationDto> conversations = new ArrayList<>();
-
-        public List<ConversationDto> getConversations() {
-            return conversations;
-        }
-
-        public void setConversations(List<ConversationDto> conversations) {
-            this.conversations = conversations;
-        }
-    }
-
     @GetMapping("/{conversationId}/messages/{id}")
     public ResponseEntity<Message> getMessage(@PathVariable final String conversationId,
             @PathVariable final int id) {
@@ -198,19 +174,6 @@ public class ConversationsController {
         }
         dto.add(linkTo(methodOn(getClass()).getConversation(conversationId)).withRel("conversation").toMono().toFuture().join());
         return ResponseEntity.ok(dto);
-    }
-
-    public static class MessageListDto extends RepresentationModel<MessageListDto> {
-        private List<Message> messages;
-
-        public List<Message> getMessages() {
-            return messages;
-        }
-
-        public void setMessages(final List<Message> messages) {
-            Objects.requireNonNull(messages);
-            this.messages = messages;
-        }
     }
 
     public ResponseEntity<Void> sendMessage(final String fromId, final String toId, final String body,

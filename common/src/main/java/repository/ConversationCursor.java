@@ -13,33 +13,12 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package blocking.repository;
+package repository;
 
 import java.util.Objects;
 import java.util.UUID;
 
 public class ConversationCursor {
-
-    public static enum Direction {
-        BEFORE('<', "DESC"),
-        AFTER('>', "ASC");
-
-        private final char operator;
-        private final String order;
-        
-        private Direction(final char operator, final String order) {
-            this.operator = operator;
-            this.order = order;
-        }
-
-        /*package private*/ char getOperator() {
-            return operator;
-        }
-
-        /*package private*/ String getOrder() {
-            return order;
-        }
-    }
 
     private final Direction direction;
     private final UUID referenceId;

@@ -15,9 +15,18 @@
  */
 package jdbc.config;
 
+import java.sql.Connection;
+import java.sql.SQLException;
+import java.sql.SQLTransientConnectionException;
+import java.time.Duration;
+import java.util.function.Supplier;
+
 import javax.sql.DataSource;
 
 import org.postgresql.Driver;
+import org.postgresql.PGProperty;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
@@ -26,13 +35,28 @@ import org.springframework.context.annotation.Configuration;
 import com.zaxxer.hikari.HikariConfig;
 import com.zaxxer.hikari.HikariDataSource;
 
+import io.github.resilience4j.core.IntervalFunction;
+import io.github.resilience4j.retry.Retry;
+import io.github.resilience4j.retry.RetryConfig;
+import io.github.resilience4j.retry.RetryRegistry;
+import io.vavr.control.Either;
+
 @Configuration
 public class JdbcConfiguration {
 
+    private final Logger logger = LoggerFactory.getLogger(getClass());
+    private final RetryConfig retryConfig =
+            RetryConfig.custom()
+            .intervalFunction(IntervalFunction.ofExponentialRandomBackoff(Duration.ofMillis(16)))
+            .maxAttempts(16)
+            .retryExceptions(SQLTransientConnectionException.class)
+            .build();
+    private final RetryRegistry retryRegistry = RetryRegistry.of(retryConfig);
     private String jdbcUrl;
     private String username;
     private String password;
     private int maximumPoolSize = 4;
+    private int defaultFetchSize = 4;
 
     @Bean
     public HikariConfig hikariConfig() {
@@ -41,14 +65,48 @@ public class JdbcConfiguration {
         config.setUsername(getUsername());
         config.setPassword(getPassword());
         config.setDriverClassName(Driver.class.getName());
+        config.setMinimumIdle(getMaximumPoolSize());
         config.setMaximumPoolSize(getMaximumPoolSize());
+        config.setConnectionTimeout(2_000);
+        config.addDataSourceProperty(PGProperty.DEFAULT_ROW_FETCH_SIZE.getName(), defaultFetchSize);
         return config;
     }
 
     @Bean
     @Autowired
     public DataSource dataSource(final HikariConfig config) {
-        return new HikariDataSource(config);
+        final Retry retry = retryRegistry.retry("jdbc.DataSource.getConnection");
+        return new HikariDataSource(config) {
+            public Connection getConnection() throws SQLException {
+                final var either = retry.executeEitherSupplier((Supplier<Either<SQLException, Connection>>) () -> {
+                    try {
+                        return Either.right(super.getConnection());
+                    } catch (final SQLException se) {
+                        logger.warn(se.getMessage(), se);
+                        return Either.left(se);
+                    }
+                });
+                if (either.isLeft()) {
+                    throw either.getLeft();
+                }
+                return either.get();
+            }
+
+            public Connection getConnection(String username, String password) throws SQLException {
+                final var either = retry.executeEitherSupplier((Supplier<Either<SQLException, Connection>>) () -> {
+                    try {
+                        return Either.right(super.getConnection(username, password));
+                    } catch (final SQLException se) {
+                        logger.warn(se.getMessage(), se);
+                        return Either.left(se);
+                    }
+                });
+                if (either.isLeft()) {
+                    throw either.getLeft();
+                }
+                return either.get();
+            }
+        };
     }
 
     public String getJdbcUrl() {
@@ -82,12 +140,24 @@ public class JdbcConfiguration {
         return maximumPoolSize;
     }
 
-    @Value("${database.maximumPoolSize}")
+    @Value("${database.maximumPoolSize:4}")
     public void setMaximumPoolSize(final int maximumPoolSize) {
         if (maximumPoolSize < 1) {
             throw new IllegalArgumentException("maximumPoolSize cannot be less than 1");
         }
         this.maximumPoolSize = maximumPoolSize;
+    }
+
+    public int getDefaultFetchSize() {
+        return defaultFetchSize;
+    }
+
+    @Value("${database.defaultFetchSize:4}")
+    public void setDefaultFetchSize(final int defaultFetchSize) {
+        if (defaultFetchSize < 0) {
+            throw new IllegalArgumentException("fetchSize must be non-negative");
+        }
+        this.defaultFetchSize = defaultFetchSize;
     }
 
 }

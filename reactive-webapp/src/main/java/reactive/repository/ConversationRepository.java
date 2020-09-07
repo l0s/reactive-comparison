@@ -18,7 +18,7 @@ package reactive.repository;
 import static java.sql.ResultSet.CONCUR_READ_ONLY;
 import static java.sql.ResultSet.TYPE_FORWARD_ONLY;
 import static java.sql.ResultSet.TYPE_SCROLL_SENSITIVE;
-import static reactive.repository.ConversationCursor.Direction.BEFORE;
+import static repository.Direction.BEFORE;
 
 import java.io.ByteArrayOutputStream;
 import java.io.DataOutputStream;
@@ -26,9 +26,11 @@ import java.io.IOException;
 import java.sql.Connection;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.time.Duration;
 import java.time.OffsetDateTime;
 import java.util.Objects;
 import java.util.UUID;
+import java.util.function.BiConsumer;
 
 import javax.sql.DataSource;
 
@@ -45,12 +47,18 @@ import domain.User;
 import jdbc.util.ResultSetTraverser;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
+import reactor.core.publisher.SynchronousSink;
 import reactor.core.scheduler.Scheduler;
+import reactor.util.function.Tuple2;
+import reactor.util.retry.Retry;
+import reactor.util.retry.RetryBackoffSpec;
+import repository.ConversationCursor;
 import sync.LockFactory;
 
 @Repository
 public class ConversationRepository {
 
+    private static final RetryBackoffSpec backoffSpec = Retry.backoff(16, Duration.ofMillis(2));
     private static final String selectNextMessageIdQuery = "SELECT next_message_id FROM Conversation WHERE id=?;";
     private static final String findMessagesQuery = "SELECT ts, from_id, body, id FROM Message WHERE conversation_id=? AND id<? ORDER BY id DESC LIMIT ?;";
 
@@ -97,7 +105,7 @@ public class ConversationRepository {
                 }
             });
         });
-        return flux.publishOn(getScheduler());
+        return flux.retryWhen(backoffSpec).publishOn(getScheduler());
     }
 
     public Mono<Conversation> findConversation(final UUID id) {
@@ -126,14 +134,14 @@ public class ConversationRepository {
                 sink.error(e);
             }
         });
-        return mono.publishOn(getScheduler());
+        return mono.retryWhen(backoffSpec).publishOn(getScheduler());
     }
 
     public Mono<Conversation> findOrCreateConversation(final Mono<User> firstParticipant,
             final Mono<User> secondParticipant) {
-        return firstParticipant.zipWith(secondParticipant, (first, second) -> {
-            final var firstParticipantId = first.getId();
-            final var secondParticipantId = second.getId();
+        return firstParticipant.zipWith(secondParticipant).handle((BiConsumer<Tuple2<User, User>, SynchronousSink<Conversation>>)( tuple, sink ) -> {
+            final var firstParticipantId = tuple.getT1().getId();
+            final var secondParticipantId = tuple.getT2().getId();
 
             final var conversationId = firstParticipantId.compareTo(secondParticipantId) < 0
                     ? composeIds(firstParticipantId, secondParticipantId)
@@ -150,7 +158,9 @@ public class ConversationRepository {
                         findStatement.setObject(1, conversationId);
                         try (var resultSet = findStatement.executeQuery()) {
                             if (resultSet.next()) {
-                                return new Conversation(conversationId, resultSet.getInt(1));
+                                sink.next(new Conversation(conversationId, resultSet.getInt(1)));
+                                sink.complete();
+                                return;
                             }
                         }
                     }
@@ -167,7 +177,9 @@ public class ConversationRepository {
                         findStatement.setObject(1, conversationId);
                         try (var resultSet = findStatement.executeQuery()) {
                             if (resultSet.next()) {
-                                return new Conversation(conversationId, resultSet.getInt(1));
+                                sink.next(new Conversation(conversationId, resultSet.getInt(1)));
+                                sink.complete();
+                                return;
                             }
                         }
                     }
@@ -181,8 +193,8 @@ public class ConversationRepository {
                         final var rowsUpdated = insertStatement.executeUpdate();
                         if (rowsUpdated < 0 || rowsUpdated > 1) {
                             connection.rollback();
-                            throw new IllegalStateException(
-                                    "consistency error: expected either 0 or 1 conversations inserted");
+                            sink.error(new IllegalStateException(
+                                    "consistency error: expected either 0 or 1 conversations inserted"));
                         }
                         try (var relateStatement = connection.prepareStatement(
                                 "INSERT INTO Conversation_Participant ( conversation_id, user_id ) VALUES ( ?, ? );",
@@ -196,13 +208,15 @@ public class ConversationRepository {
                             final var batchResult = relateStatement.executeBatch();
                             if (batchResult.length != 2 && batchResult[0] != 1 && batchResult[1] != 1) {
                                 connection.rollback();
-                                throw new RuntimeException(
-                                        "consistency error: multiple conversation participants created");
+                                sink.error(new RuntimeException(
+                                        "consistency error: multiple conversation participants created"));
                             }
                         }
                         connection.commit();
                     }
-                    return retval;
+                    sink.next(retval);
+                    sink.complete();
+                    return;
                 } finally {
                     lock.unlockWrite(writeStamp);
                 }
@@ -210,7 +224,8 @@ public class ConversationRepository {
                 final var message = "Error obtaining conversation between " + firstParticipantId + " and "
                         + firstParticipantId + ": " + se.getMessage();
                 logger.error(message, se);
-                throw new RuntimeException(message, se);
+                sink.error(se);
+                return;
             }
         })
         .publishOn(getScheduler());
@@ -291,7 +306,7 @@ public class ConversationRepository {
                 sink.error(se);
             }
         });
-        return mono.publishOn(getScheduler());
+        return mono.retryWhen(backoffSpec).publishOn(getScheduler());
     }
 
     public Mono<Message> findMessage(final Mono<User> sender, final Mono<User> recipient, final int id) {
@@ -303,66 +318,72 @@ public class ConversationRepository {
                 : composeIds(recipientId, senderId);
         })
         .flatMap(compositeId -> findMessage(compositeId, id))
+        .retryWhen(backoffSpec)
         .publishOn(getScheduler());
     }
 
     public Mono<Message> createMessage(final Mono<Conversation> conversation, final Mono<Message> message) {
-        return conversation.zipWith(message, (conversationToUpdate, messageToUpdate) -> {
-            try (var connection = getDataSource().getConnection()) {
-                connection.setAutoCommit(false);
-                connection.setTransactionIsolation(Connection.TRANSACTION_REPEATABLE_READ);
+        return conversation.zipWith(message)
+                .handle((BiConsumer<Tuple2<Conversation, Message>, SynchronousSink<Message>>) (tuple, sink) -> {
+                    final var conversationToUpdate = tuple.getT1();
+                    final var messageToUpdate = tuple.getT2();
+                    try (var connection = getDataSource().getConnection()) {
+                        connection.setAutoCommit(false);
+                        connection.setTransactionIsolation(Connection.TRANSACTION_REPEATABLE_READ);
 
-                final var updatedConversation = getAndIncrementMessageId(connection, conversationToUpdate);
+                        final var messageId = getAndIncrementMessageId(connection, conversationToUpdate);
 
-                final var messageId = updatedConversation.getNextMessageId();
-                messageToUpdate.setId(messageId);
-                try (var statement = connection.prepareStatement(
-                        "INSERT INTO Message ( ts, from_id, body, conversation_id, id ) VALUES ( ?, ?, ?, ?, ? );")) {
-                    statement.setObject(1, messageToUpdate.getTimestamp());
-                    statement.setObject(2, messageToUpdate.getFromUserId());
-                    statement.setString(3, messageToUpdate.getBody());
-                    statement.setObject(4, updatedConversation.getId());
-                    statement.setInt(5, messageId);
-                    final var rowsInserted = statement.executeUpdate();
-                    if (rowsInserted != 1) {
-                        connection.rollback();
-                        throw new RuntimeException("Expected 1 row to be inserted, but got: " + rowsInserted);
-                    } else {
-                        connection.commit();
-                        return messageToUpdate;
+                        messageToUpdate.setId(messageId);
+                        try (var statement = connection.prepareStatement(
+                                "INSERT INTO Message ( ts, from_id, body, conversation_id, id ) VALUES ( ?, ?, ?, ?, ? );")) {
+                            statement.setObject(1, messageToUpdate.getTimestamp());
+                            statement.setObject(2, messageToUpdate.getFromUserId());
+                            statement.setString(3, messageToUpdate.getBody());
+                            statement.setObject(4, conversationToUpdate.getId());
+                            statement.setInt(5, messageId);
+                            final var rowsInserted = statement.executeUpdate();
+                            if (rowsInserted != 1) {
+                                connection.rollback();
+                                sink.error(new RuntimeException(
+                                        "Expected 1 row to be inserted, but got: " + rowsInserted));
+                            } else {
+                                connection.commit();
+                                sink.next(messageToUpdate);
+                                sink.complete();
+                            }
+                            return;
+                        }
+                    } catch (final SQLException se) {
+                        logger.error(se.getMessage(), se);
+                        sink.error(se);
+                        return;
                     }
-                }
-            } catch (final SQLException se) {
-                logger.error(se.getMessage(), se);
-                throw new RuntimeException(se.getMessage(), se);
-            }
-        }).publishOn(getScheduler());
+                }).publishOn(getScheduler());
     }
 
-    protected Conversation getAndIncrementMessageId(final Connection connection, final Conversation conversation) throws SQLException {
+    protected int getAndIncrementMessageId(final Connection connection, final Conversation conversation)
+            throws SQLException {
         final var lock = lockFactory.getLock(conversation.getId());
         final var stamp = lock.writeLock();
         try {
-            try (var statement = connection.prepareStatement("SELECT id, next_message_id FROM Conversation WHERE id=?;",
-                    ResultSet.TYPE_FORWARD_ONLY, ResultSet.CONCUR_UPDATABLE)) {
+            final var query = "UPDATE Conversation SET next_message_id=next_message_id + 1 WHERE id=? RETURNING next_message_id - 1 AS current, next_message_id AS next;";
+            try (var statement = connection.prepareStatement(query, ResultSet.TYPE_FORWARD_ONLY,
+                    ResultSet.CONCUR_READ_ONLY)) {
                 statement.setObject(1, conversation.getId());
                 try (var resultSet = statement.executeQuery()) {
                     if (!resultSet.next()) {
-                        throw new IllegalArgumentException("Conversation not found: " + conversation.getId());
+                        throw new IllegalArgumentException("Cannot find conversation with id: " + conversation.getId());
                     }
-                    final var retval = resultSet.getInt("next_message_id");
-                    final int nextMessageId = retval + 1;
-                    resultSet.updateInt("next_message_id", nextMessageId);
-                    resultSet.updateRow();
+                    final var retval = resultSet.getInt("current");
+                    final var next = resultSet.getInt("next");
                     if (resultSet.next()) {
                         throw new IllegalStateException(
-                                "Multiple conversations found with id: " + conversation.getId());
+                                "Multiple matching conversations found for id: " + conversation.getId());
                     }
-                    conversation.setNextMessageId(nextMessageId);
-                    // release lock so other processes can query the table, may create holes
-                    // in the sequence if subsequent commands fail
+                    // release lock so other processes can query the table
                     connection.commit();
-                    return conversation;
+                    conversation.setNextMessageId(next);
+                    return retval;
                 }
             }
         } finally {

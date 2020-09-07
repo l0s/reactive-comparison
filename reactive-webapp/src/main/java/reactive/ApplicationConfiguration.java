@@ -57,17 +57,23 @@ public class ApplicationConfiguration {
     }
 
     /**
+     * <p>
      * Create a dedicated scheduler for JDBC operations with number of
      * threads set to the maximum JDBC pool size.
-     * 
-     * TODO since this creates an additional thread pool, it may give the reactive implementation an unfair advantage.
+     * </p>
+     * <p>
+     * This creates an additional thread pool, which may give the reactive
+     * implementation an unfair advantage. However, without it, the JDBC
+     * connection pool gets overwhelmed.
+     * </p>
      * 
      * @see https://dzone.com/articles/spring-5-webflux-and-jdbc-to-block-or-not-to-block
      * @return Scheduler to use for JDBC operations
      */
     @Bean(name = "databaseScheduler")
     public Scheduler databaseScheduler(final HikariConfig config) {
-        return Schedulers.newBoundedElastic(config.getMaximumPoolSize(), Integer.MAX_VALUE, "jdbc-worker");
+//        return Schedulers.immediate();
+        return Schedulers.newParallel("jdbc-worker", config.getMaximumPoolSize());
     }
 
     @Bean

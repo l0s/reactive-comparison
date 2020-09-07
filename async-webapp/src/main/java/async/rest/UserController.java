@@ -38,9 +38,9 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import async.repository.UserRepository;
-import async.rest.ConversationsController.ConversationListDto;
 import domain.Message;
 import domain.User;
+import dto.ConversationListDto;
 
 @RestController
 @RequestMapping("/users")
