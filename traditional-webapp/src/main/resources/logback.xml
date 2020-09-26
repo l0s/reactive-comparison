@@ -26,15 +26,6 @@
         <appender-ref ref="STDOUT"/>
     </root>
 
-    <logger name="integrationtest" level="debug" />
-
-    <logger name="reactive" level="debug" />
-    <logger name="async" level="debug" />
-    <logger name="blocking" level="debug" />
-
-    <logger name="reactor" level="warn" />
-    <logger name="com.zaxxer.hikari" level="info" />
-    <logger name="org.springframework" level="info" />
-    <logger name="org.springframework.aop" level="warn" />
-    <logger name="org.flywaydb" level="info" />
+    <logger name="spring" level="info" />
+    <logger name="org.springframework.boot.context.config" level="trace" />
 </configuration>

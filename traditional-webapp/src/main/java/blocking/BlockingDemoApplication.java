@@ -20,6 +20,8 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.boot.builder.SpringApplicationBuilder;
 import org.springframework.context.ConfigurableApplicationContext;
 
+import spring.StartupListener;
+
 @SpringBootApplication(scanBasePackageClasses = ApplicationConfiguration.class)
 public class BlockingDemoApplication {
 
@@ -30,7 +32,8 @@ public class BlockingDemoApplication {
     public static ConfigurableApplicationContext run(final String[] arguments) {
         final var builder =
                 new SpringApplicationBuilder(BlockingDemoApplication.class)
-                .web(WebApplicationType.REACTIVE);
+                .web(WebApplicationType.REACTIVE)
+                .listeners(new StartupListener());
         final var application = builder.build();
         return application.run(arguments);
     }

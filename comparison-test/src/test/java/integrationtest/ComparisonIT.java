@@ -167,8 +167,7 @@ public class ComparisonIT {
                     new PostgreSQLContainer("postgres:12.2")
                     .withDatabaseName("db")
                     .withUsername("username")
-                    .withPassword("password")
-                    .withInitScript("schema.sql");
+                    .withPassword("password");
                 database.start();
 
                 final var context = paradigm.run(

@@ -52,5 +52,9 @@
       <artifactId>resilience4j-retry</artifactId>
       <version>1.5.0</version>
     </dependency>
+    <dependency>
+      <groupId>org.flywaydb</groupId>
+      <artifactId>flyway-core</artifactId>
+    </dependency>
   </dependencies>
 </project>

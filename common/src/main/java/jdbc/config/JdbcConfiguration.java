@@ -23,6 +23,7 @@ import java.util.function.Supplier;
 
 import javax.sql.DataSource;
 
+import org.flywaydb.core.Flyway;
 import org.postgresql.Driver;
 import org.postgresql.PGProperty;
 import org.slf4j.Logger;
@@ -107,6 +108,18 @@ public class JdbcConfiguration {
                 return either.get();
             }
         };
+    }
+
+    @Bean
+    @Autowired
+    public Flyway databaseMigration(final DataSource dataSource) {
+        final Flyway retval = Flyway.configure()
+                .dataSource(dataSource)
+                .locations("classpath:db/migration")
+                .load();
+        final int result = retval.migrate();
+        logger.info("Applied {} DB migrations.", result);
+        return retval;
     }
 
     public String getJdbcUrl() {
