@@ -19,6 +19,7 @@ import java.util.Objects;
 import java.util.function.Function;
 
 import org.springframework.context.ConfigurableApplicationContext;
+import org.testcontainers.containers.Network;
 
 import async.AsyncDemoApplication;
 import blocking.BlockingDemoApplication;
@@ -29,26 +30,34 @@ enum Paradigm {
     /**
      * Netty + Spring WebFlux (blocking)
      */
-    BLOCKING(BlockingDemoApplication::run),
+    BLOCKING(BlockingDemoApplication::run, BlockingContainer::new),
     /**
      * Undertow + Sring Web (async servlet)
      */
-    ASYNC(AsyncDemoApplication::run),
+    ASYNC(AsyncDemoApplication::run, AsyncContainer::new),
     /**
      * Netty + Spring WebFlux + Project Reactor
      */
-    REACTIVE(ReactiveDemoApplication::run),
+    REACTIVE(ReactiveDemoApplication::run, ReactiveContainer::new),
     ;
 
     private final Function<String[], ConfigurableApplicationContext> mainMethod;
+    private final Function<Network, ApplicationContainer> containerCreator;
 
-    private Paradigm(final Function<String[], ConfigurableApplicationContext> mainMethod) {
+    private Paradigm(final Function<String[], ConfigurableApplicationContext> mainMethod,
+            final Function<Network, ApplicationContainer> containerCreator) {
         Objects.requireNonNull(mainMethod);
+        Objects.requireNonNull(containerCreator);
         this.mainMethod = mainMethod;
+        this.containerCreator = containerCreator;
     }
 
     public ConfigurableApplicationContext run(final String... arguments) {
         return mainMethod.apply(arguments);
+    }
+
+    public ApplicationContainer createContainer(final Network network) {
+        return containerCreator.apply(network);
     }
 
 }

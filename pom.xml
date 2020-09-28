@@ -121,6 +121,26 @@
           <version>3.0.0</version>
         </plugin>
         <plugin>
+          <groupId>org.springframework.boot</groupId>
+          <artifactId>spring-boot-maven-plugin</artifactId>
+          <executions>
+            <execution>
+              <!-- Allow this application to be used as a dependency:
+                   https://stackoverflow.com/questions/40089443/how-to-add-a-dependency-to-a-spring-boot-jar-in-another-project -->
+              <id>repackage</id>
+              <configuration>
+                <classifier>exec</classifier>
+              </configuration>
+            </execution>
+          </executions>
+          <configuration>
+            <!-- Force use of properties launcher in order to load external classpath through -Dloader.path=
+                 https://stackoverflow.com/a/53848364
+            -->
+            <layout>ZIP</layout>
+          </configuration>
+        </plugin>
+        <plugin>
           <groupId>io.fabric8</groupId>
           <artifactId>docker-maven-plugin</artifactId>
           <version>0.34.0</version>
@@ -132,6 +152,86 @@
               </goals>
             </execution>
           </executions>
+          <configuration>
+            <verbose>all</verbose>
+            <autoCreateCustomNetworks>true</autoCreateCustomNetworks>
+            <images>
+              <image>
+                <alias>application</alias>
+                <name>${project.artifactId}</name>
+                <build>
+                  <from>openjdk:${java.version}-slim-buster</from>
+                  <tags>
+                    <tag>${project.version}</tag>
+                  </tags>
+                  <assembly>
+                    <targetDir>/usr/lib/${project.artifactId}</targetDir>
+                    <inline>
+                      <files>
+                        <file>
+                          <source>target/${project.artifactId}-${project.version}-exec.jar</source>
+                          <outputDirectory>.</outputDirectory>
+                        </file>
+                      </files>
+                    </inline>
+                  </assembly>
+                  <entryPoint>
+                    <arg>java</arg>
+                    <!-- Add configuration directory to classpath -->
+                    <arg>-Dloader.path=/etc/${project.artifactId}/</arg>
+                    <arg>-jar</arg>
+                    <arg>/usr/lib/${project.artifactId}/${project.artifactId}-${project.version}-exec.jar</arg>
+                    <arg>--spring.config.location=/etc/${project.artifactId}/</arg>
+                  </entryPoint>
+                </build>
+                <run>
+                  <containerNamePattern>%n-%t-%i</containerNamePattern>
+                  <volumes>
+                    <bind>
+                      <volume>${project.basedir}/src/main/assembly/local:/etc/${project.artifactId}</volume>
+                    </bind>
+                  </volumes>
+                  <ports>
+                    <port>8080:8080</port>
+                  </ports>
+                  <network>
+                    <name>network</name>
+                    <alias>application</alias>
+                  </network>
+                  <wait>
+                    <log>Application ready.</log>
+                    <time>20000</time>
+                  </wait>
+                  <dependsOn>
+                    <container>database</container>
+                  </dependsOn>
+                </run>
+              </image>
+              <image>
+                <alias>database</alias>
+                <name>postgres:12.2</name>
+                <run>
+                  <containerNamePattern>%a-%t-%i</containerNamePattern>
+                  <env>
+                    <POSTGRES_PASSWORD>password</POSTGRES_PASSWORD>
+                    <POSTGRES_USER>username</POSTGRES_USER>
+                    <POSTGRES_DB>db</POSTGRES_DB>
+                  </env>
+                  <wait>
+                    <log>database system is ready to accept connections</log>
+                    <time>20000</time>
+                  </wait>
+                  <ports>
+                    <port>5432:5432</port>
+                  </ports>
+                  <network>
+                    <name>network</name>
+                    <alias>database</alias>
+                  </network>
+                </run>
+              </image>
+            </images>
+          </configuration>
         </plugin>
       </plugins>
     </pluginManagement>
