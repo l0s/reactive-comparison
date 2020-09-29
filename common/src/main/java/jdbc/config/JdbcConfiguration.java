@@ -56,7 +56,9 @@ public class JdbcConfiguration {
     private String jdbcUrl;
     private String username;
     private String password;
-    private int maximumPoolSize = 4;
+
+    // set pool size to 2x the number of CPUs: https://github.com/brettwooldridge/HikariCP/wiki/About-Pool-Sizing
+    private static final int maximumPoolSize = Runtime.getRuntime().availableProcessors() * 2;
     private int defaultFetchSize = 4;
 
     @Bean
@@ -149,16 +151,17 @@ public class JdbcConfiguration {
         this.password = password;
     }
 
+    @Deprecated
     public int getMaximumPoolSize() {
         return maximumPoolSize;
     }
 
+    @Deprecated
     @Value("${database.maximumPoolSize:4}")
     public void setMaximumPoolSize(final int maximumPoolSize) {
-        if (maximumPoolSize < 1) {
-            throw new IllegalArgumentException("maximumPoolSize cannot be less than 1");
+        if (maximumPoolSize != JdbcConfiguration.maximumPoolSize) {
+            logger.info("Ignoring requested maximumPoolSize: {}", maximumPoolSize);
         }
-        this.maximumPoolSize = maximumPoolSize;
     }
 
     public int getDefaultFetchSize() {

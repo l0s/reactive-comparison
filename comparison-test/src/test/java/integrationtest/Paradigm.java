@@ -18,42 +18,29 @@ package integrationtest;
 import java.util.Objects;
 import java.util.function.Function;
 
-import org.springframework.context.ConfigurableApplicationContext;
 import org.testcontainers.containers.Network;
-
-import async.AsyncDemoApplication;
-import blocking.BlockingDemoApplication;
-import reactive.ReactiveDemoApplication;
 
 enum Paradigm {
 
     /**
      * Netty + Spring WebFlux (blocking)
      */
-    BLOCKING(BlockingDemoApplication::run, BlockingContainer::new),
+    BLOCKING(BlockingContainer::new),
     /**
      * Undertow + Sring Web (async servlet)
      */
-    ASYNC(AsyncDemoApplication::run, AsyncContainer::new),
+    ASYNC(AsyncContainer::new),
     /**
      * Netty + Spring WebFlux + Project Reactor
      */
-    REACTIVE(ReactiveDemoApplication::run, ReactiveContainer::new),
+    REACTIVE(ReactiveContainer::new),
     ;
 
-    private final Function<String[], ConfigurableApplicationContext> mainMethod;
     private final Function<Network, ApplicationContainer> containerCreator;
 
-    private Paradigm(final Function<String[], ConfigurableApplicationContext> mainMethod,
-            final Function<Network, ApplicationContainer> containerCreator) {
-        Objects.requireNonNull(mainMethod);
+    private Paradigm(final Function<Network, ApplicationContainer> containerCreator) {
         Objects.requireNonNull(containerCreator);
-        this.mainMethod = mainMethod;
         this.containerCreator = containerCreator;
-    }
-
-    public ConfigurableApplicationContext run(final String... arguments) {
-        return mainMethod.apply(arguments);
     }
 
     public ApplicationContainer createContainer(final Network network) {

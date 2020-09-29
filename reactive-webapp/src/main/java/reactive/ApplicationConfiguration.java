@@ -72,8 +72,8 @@ public class ApplicationConfiguration {
      */
     @Bean(name = "databaseScheduler")
     public Scheduler databaseScheduler(final HikariConfig config) {
-//        return Schedulers.immediate();
-        return Schedulers.newParallel("jdbc-worker", config.getMaximumPoolSize());
+        return Schedulers.immediate();
+//        return Schedulers.newParallel("jdbc-worker", config.getMaximumPoolSize());
     }
 
     @Bean

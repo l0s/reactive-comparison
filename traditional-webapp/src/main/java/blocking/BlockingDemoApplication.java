@@ -18,7 +18,6 @@ package blocking;
 import org.springframework.boot.WebApplicationType;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.boot.builder.SpringApplicationBuilder;
-import org.springframework.context.ConfigurableApplicationContext;
 
 import spring.StartupListener;
 
@@ -26,16 +25,14 @@ import spring.StartupListener;
 public class BlockingDemoApplication {
 
     public static void main(final String[] args) {
-        run(args);
-    }
-
-    public static ConfigurableApplicationContext run(final String[] arguments) {
         final var builder =
                 new SpringApplicationBuilder(BlockingDemoApplication.class)
+                // force the use of Netty to isolate comparison the web server
+                // from the comparison of paradigms
                 .web(WebApplicationType.REACTIVE)
                 .listeners(new StartupListener());
         final var application = builder.build();
-        return application.run(arguments);
+        application.run(args);
     }
 
 }

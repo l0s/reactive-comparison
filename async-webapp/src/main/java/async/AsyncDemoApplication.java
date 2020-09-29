@@ -18,7 +18,6 @@ package async;
 import org.springframework.boot.WebApplicationType;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.boot.builder.SpringApplicationBuilder;
-import org.springframework.context.ConfigurableApplicationContext;
 import org.springframework.scheduling.annotation.EnableAsync;
 
 import spring.StartupListener;
@@ -28,15 +27,11 @@ import spring.StartupListener;
 public class AsyncDemoApplication {
 
     public static void main(final String[] args) {
-        run(args);
-    }
-
-    public static ConfigurableApplicationContext run(final String[] arguments) {
         final var builder = new SpringApplicationBuilder(AsyncDemoApplication.class)
                 .web(WebApplicationType.SERVLET)
                 .listeners(new StartupListener());
         final var application = builder.build();
-        return application.run(arguments);
+        application.run(args);
     }
 
 }

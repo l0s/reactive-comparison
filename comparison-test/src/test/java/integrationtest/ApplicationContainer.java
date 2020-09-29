@@ -33,9 +33,14 @@ abstract class ApplicationContainer extends GenericContainer<ApplicationContaine
         withNetwork(network);
         withExposedPorts(8080);
         withLogConsumer(this::logFrame);
+        withCreateContainerCmdModifier(command -> {
+            final var hostConfig = command.getHostConfig();
+            // simulate AWS t2.micro
+            hostConfig.withCpuCount(2l);
+            hostConfig.withMemory(1024l * 1024 * 1024);
+        });
     }
 
-    @Override
     public void stop() {
         logger.info("Stopping");
         super.stop();
