@@ -15,27 +15,22 @@
  */
 package reactive;
 
-import org.springframework.boot.SpringApplication;
 import org.springframework.boot.WebApplicationType;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.boot.builder.SpringApplicationBuilder;
-import org.springframework.context.ConfigurableApplicationContext;
+
+import spring.StartupListener;
 
 @SpringBootApplication(scanBasePackageClasses = ApplicationConfiguration.class)
 public class ReactiveDemoApplication {
 
-	public static void main(final String[] args) {
-		run(args);
-	}
-
-	public static ConfigurableApplicationContext run(final String[] arguments) {
-	    return createApplication().run(arguments);
-	}
-
-	protected static SpringApplication createApplication() {
-	    final SpringApplicationBuilder builder = new SpringApplicationBuilder(ReactiveDemoApplication.class);
-	    builder.web(WebApplicationType.REACTIVE);
-	    return builder.build();
-	}
+    public static void main(final String[] args) {
+        final var builder =
+                new SpringApplicationBuilder(ReactiveDemoApplication.class)
+                .web(WebApplicationType.REACTIVE)
+                .listeners(new StartupListener());
+        final var application = builder.build();
+        application.run(args);
+    }
 
 }

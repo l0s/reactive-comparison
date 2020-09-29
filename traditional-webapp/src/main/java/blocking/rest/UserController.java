@@ -79,7 +79,6 @@ public class UserController {
         }
         final var builder = ResponseEntity.ok();
         final var list = repository.findAll(pageNumber, pageSize);
-        // FIXME properly construct base url
         final var host = requestHeaders.getHost();
         final var portString = host.getPort() == 80 ? "" : ":" + host.getPort();
         // FIXME programmatically determine scheme / protocol
@@ -109,8 +108,13 @@ public class UserController {
         try {
             final var selfLink = future.get();
             final URI uri = selfLink.toUri();
-            // FIXME properly construct base url
-            return ResponseEntity.created(new URI("http://localhost:8080").resolve(uri)).build();
+            final var host = requestHeaders.getHost();
+            final var portString = host.getPort() == 80 ? "" : ":" + host.getPort();
+            // FIXME programmatically determine scheme / protocol
+            final var prefix = "http" + "://" + host.getHostString() + portString;
+            final var baseUri = new URI(prefix);
+            final var location = baseUri.resolve(uri);
+            return ResponseEntity.created(location).build();
         } catch (final ExecutionException | InterruptedException | URISyntaxException e) {
             logger.error(e.getMessage(), e);
             throw new RuntimeException(e.getMessage(), e);
