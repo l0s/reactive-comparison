@@ -1,25 +1,27 @@
 # Comparing Reactive vs. Blocking Paradigms
 
 This project compares the ergonomics and performance of implementing the
-same REST API using the traditional blocking paradigm vs. the reactive
-paradigm.
+same REST API using the traditional blocking paradigm, the async
+paradigm, and the reactive paradigm.
 
 ## The Stack(s)
 
-The reactive implementation uses Spring WebFlux and the blocking
-implementation uses Spring Web MVC.
+The reactive implementation uses Spring WebFlux with Netty. The blocking
+implementation uses Spring WebMVC with Netty. The async implementation uses
+Spring WebMVC with Tomcat.
 
 ### In-Common
 
 In order to make the comparison as fair as possible, I used the following
 common components:
 
-* Netty
 * Spring Boot
   * Web MVC, HATEOAS
 * JDBC
   * HikariCP, PostgreSQL Driver
 * PostgreSQL
+
+In addition, both the blocking and reactive implementations use Netty.
 
 ## Application Design Considerations
 
@@ -48,7 +50,6 @@ introducing any unnecessary overhead.
 ## For Future Followup
 
 * Test load balancing
-* Compare async servlet
 * Incorporate reactive JDBC
 
 ## References

@@ -27,7 +27,7 @@ enum Paradigm {
      */
     BLOCKING(BlockingContainer::new),
     /**
-     * Undertow + Sring Web (async servlet)
+     * Tomcat + Sring Web (async servlet)
      */
     ASYNC(AsyncContainer::new),
     /**
