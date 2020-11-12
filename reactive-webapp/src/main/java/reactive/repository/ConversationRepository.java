@@ -38,7 +38,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Repository;
 
 import domain.Conversation;
@@ -48,7 +47,6 @@ import jdbc.util.ResultSetTraverser;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import reactor.core.publisher.SynchronousSink;
-import reactor.core.scheduler.Scheduler;
 import reactor.util.function.Tuple2;
 import reactor.util.retry.Retry;
 import reactor.util.retry.RetryBackoffSpec;
@@ -66,18 +64,15 @@ public class ConversationRepository {
     private final LockFactory<UUID> lockFactory = new LockFactory<>();
 
     private final DataSource dataSource;
-    private final Scheduler scheduler;
 
     @Autowired
-    public ConversationRepository(final DataSource dataSource, @Qualifier("databaseScheduler") final Scheduler scheduler) {
+    public ConversationRepository(final DataSource dataSource) {
         Objects.requireNonNull(dataSource);
-        Objects.requireNonNull(scheduler);
         this.dataSource = dataSource;
-        this.scheduler = scheduler;
     }
 
     public Flux<Message> findMessages(final Mono<Conversation> conversation, final int limit, final int before) {
-        final Flux<Message> flux = conversation.publishOn(getScheduler()).flatMapMany(c -> {
+        final Flux<Message> flux = conversation.flatMapMany(c -> {
             return Flux.create(sink -> {
                 try (var connection = getDataSource().getConnection()) {
                     try (var statement = connection.prepareStatement(findMessagesQuery, TYPE_SCROLL_SENSITIVE,
@@ -105,7 +100,7 @@ public class ConversationRepository {
                 }
             });
         });
-        return flux.retryWhen(backoffSpec).publishOn(getScheduler());
+        return flux.retryWhen(backoffSpec);
     }
 
     public Mono<Conversation> findConversation(final UUID id) {
@@ -134,7 +129,7 @@ public class ConversationRepository {
                 sink.error(e);
             }
         });
-        return mono.retryWhen(backoffSpec).publishOn(getScheduler());
+        return mono.retryWhen(backoffSpec);
     }
 
     public Mono<Conversation> findOrCreateConversation(final Mono<User> firstParticipant,
@@ -227,8 +222,7 @@ public class ConversationRepository {
                 sink.error(se);
                 return;
             }
-        })
-        .publishOn(getScheduler());
+        });
     }
 
     public Flux<Conversation> findConversations(final Mono<User> user, final int limit, final ConversationCursor cursor) {
@@ -306,7 +300,7 @@ public class ConversationRepository {
                 sink.error(se);
             }
         });
-        return mono.retryWhen(backoffSpec).publishOn(getScheduler());
+        return mono.retryWhen(backoffSpec);
     }
 
     public Mono<Message> findMessage(final Mono<User> sender, final Mono<User> recipient, final int id) {
@@ -318,8 +312,7 @@ public class ConversationRepository {
                 : composeIds(recipientId, senderId);
         })
         .flatMap(compositeId -> findMessage(compositeId, id))
-        .retryWhen(backoffSpec)
-        .publishOn(getScheduler());
+        .retryWhen(backoffSpec);
     }
 
     public Mono<Message> createMessage(final Mono<Conversation> conversation, final Mono<Message> message) {
@@ -358,7 +351,7 @@ public class ConversationRepository {
                         sink.error(se);
                         return;
                     }
-                }).publishOn(getScheduler());
+                });
     }
 
     protected int getAndIncrementMessageId(final Connection connection, final Conversation conversation)
@@ -428,10 +421,6 @@ public class ConversationRepository {
 
     protected DataSource getDataSource() {
         return dataSource;
-    }
-
-    protected Scheduler getScheduler() {
-        return scheduler;
     }
 
 }

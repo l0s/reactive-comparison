@@ -25,13 +25,11 @@ import javax.sql.DataSource;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Repository;
 
 import domain.User;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
-import reactor.core.scheduler.Scheduler;
 
 @Repository
 public class UserRepository {
@@ -46,14 +44,11 @@ public class UserRepository {
      * JDBC framework would be used.
      */
     private final DataSource dataSource;
-    private final Scheduler scheduler;
 
     @Autowired
-    public UserRepository(final DataSource dataSource, @Qualifier("databaseScheduler") final Scheduler scheduler) {
+    public UserRepository(final DataSource dataSource) {
         Objects.requireNonNull(dataSource);
-        Objects.requireNonNull(scheduler);
         this.dataSource = dataSource;
-        this.scheduler = scheduler;
     }
 
     public void createUser(final User user) {
@@ -101,7 +96,7 @@ public class UserRepository {
                 sink.error(e);
             }
         });
-        return mono.publishOn(getScheduler());
+        return mono;
     }
 
     public Flux<User> findAll(final int pageNumber, final int pageSize) {
@@ -127,15 +122,11 @@ public class UserRepository {
                 sink.error(se);
             }
         });
-        return flux/*.publishOn(getScheduler())*/; // FIXME executing on scheduler causes incorrect behaviour
+        return flux;
     }
 
     protected DataSource getDataSource() {
         return dataSource;
-    }
-
-    protected Scheduler getScheduler() {
-        return scheduler;
     }
 
 }

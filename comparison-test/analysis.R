@@ -45,7 +45,7 @@ ggplot( create_single_user,
         aes( x=factor( paradigm ),
              y=milliseconds,
              fill=factor( paradigm ) ) ) +
-  geom_violin( trim = FALSE ) +
+  geom_violin( trim=TRUE ) +
   geom_boxplot( width=0.1 ) +
   scale_y_continuous( labels = number_format( accuracy = 1L,
                                               big.mark = ',',
@@ -59,7 +59,7 @@ ggplot( get_page_of_users,
         aes( x=factor( paradigm ),
              y=milliseconds,
              fill=factor( paradigm ) ) ) +
-  geom_violin( trim=FALSE ) +
+  geom_violin( trim=TRUE ) +
   geom_boxplot( width=0.1 ) +
   scale_y_continuous( labels = number_format( accuracy = 1L,
                                               big.mark = ',',

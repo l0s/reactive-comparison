@@ -121,7 +121,7 @@ public class ConversationRepository {
 
     public Conversation findConversation(final UUID id) {
         try (var connection = getDataSource().getConnection()) {
-            return findConversation(connection, id );
+            return findConversation(connection, id);
         } catch (final SQLException e) {
             logger.error(e.getMessage(), e);
             throw new RuntimeException(e.getMessage(), e);

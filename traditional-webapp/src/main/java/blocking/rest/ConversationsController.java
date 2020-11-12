@@ -227,13 +227,13 @@ public class ConversationsController {
         final var bytes = decoder.decode(cursor.strip());
         final var string = new String(bytes, charset);
         final var components = string.split(":", 1);
-        if( components.length != 2 || !"id".equalsIgnoreCase(components[ 0 ] ) ) {
+        if (components.length != 2 || !"id".equalsIgnoreCase(components[0])) {
             // invalid cursor syntax
             return null;
         }
         try {
             return Integer.parseInt(components[1]);
-        } catch( final NumberFormatException nfe ) {
+        } catch (final NumberFormatException nfe) {
             // invalid cursor syntax
             logger.debug("Invalid message cursor: " + cursor + ": " + nfe.getMessage(), nfe);
             return null;

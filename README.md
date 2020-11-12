@@ -15,11 +15,15 @@ Spring WebMVC with Tomcat.
 In order to make the comparison as fair as possible, I used the following
 common components:
 
-* Spring Boot
-  * Web MVC, HATEOAS
+* Spring
+  * Boot
+  * Web MVC
+  * HATEOAS
 * JDBC
-  * HikariCP, PostgreSQL Driver
+  * HikariCP
+  * PostgreSQL Driver
 * PostgreSQL
+* Resilience4J
 
 In addition, both the blocking and reactive implementations use Netty.
 

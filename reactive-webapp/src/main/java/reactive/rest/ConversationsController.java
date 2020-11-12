@@ -158,8 +158,6 @@ public class ConversationsController {
             return Mono.just(ResponseEntity.badRequest().build());
         }
 
-        // TODO ensure the user is party to the conversation
-
         final var emptyHandler = Mono.fromSupplier(() -> {
             return ResponseEntity.status(HttpStatus.NOT_FOUND).body((MessageListDto) null);
         });

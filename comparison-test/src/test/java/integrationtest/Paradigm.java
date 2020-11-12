@@ -16,7 +16,6 @@
 package integrationtest;
 
 import java.util.Objects;
-import java.util.function.Function;
 
 import org.testcontainers.containers.Network;
 
@@ -25,26 +24,26 @@ enum Paradigm {
     /**
      * Netty + Spring WebFlux (blocking)
      */
-    BLOCKING(BlockingContainer::new),
+    BLOCKING("traditional-webapp"),
     /**
      * Tomcat + Sring Web (async servlet)
      */
-    ASYNC(AsyncContainer::new),
+    ASYNC("async-webapp"),
     /**
      * Netty + Spring WebFlux + Project Reactor
      */
-    REACTIVE(ReactiveContainer::new),
+    REACTIVE("reactive-webapp"),
     ;
 
-    private final Function<Network, ApplicationContainer> containerCreator;
+    private final String artifactId;
 
-    private Paradigm(final Function<Network, ApplicationContainer> containerCreator) {
-        Objects.requireNonNull(containerCreator);
-        this.containerCreator = containerCreator;
+    private Paradigm(final String artifactId) {
+        Objects.requireNonNull(artifactId);
+        this.artifactId = artifactId;
     }
 
     public ApplicationContainer createContainer(final Network network) {
-        return containerCreator.apply(network);
+        return new ApplicationContainer(artifactId, network);
     }
 
 }

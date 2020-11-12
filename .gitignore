@@ -4,3 +4,4 @@
 **/.classpath
 **/test-output
 .Rproj.user
+comparison-test/Rplots.pdf

@@ -15,7 +15,9 @@
  */
 package integrationtest;
 
-import java.io.PrintStream;
+import java.io.FileInputStream;
+import java.io.IOException;
+import java.util.Properties;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -24,12 +26,26 @@ import org.testcontainers.containers.Network;
 import org.testcontainers.containers.output.OutputFrame;
 import org.testcontainers.containers.output.OutputFrame.OutputType;
 
-abstract class ApplicationContainer extends GenericContainer<ApplicationContainer> {
+class ApplicationContainer extends GenericContainer<ApplicationContainer> {
 
     private final Logger logger = LoggerFactory.getLogger(getClass());
+    protected static final String version;
 
-    public ApplicationContainer(final String taggedImage, final Network network) {
-        super(taggedImage);
+    static {
+        final var properties = new Properties();
+        try (var inputStream = new FileInputStream("target/maven-archiver/pom.properties")) {
+            properties.load(inputStream);
+            if (!properties.containsKey("version")) {
+                throw new IllegalStateException("version not available");
+            }
+            version = (String) properties.get("version");
+        } catch (final IOException e) {
+            throw new IllegalStateException("pom.properties not available: " + e.getMessage(), e);
+        }
+    }
+
+    protected ApplicationContainer(final String artifactId, final Network network) {
+        super(artifactId + ":" + version);
         withNetwork(network);
         withExposedPorts(8080);
         withLogConsumer(this::logFrame);
@@ -39,6 +55,7 @@ abstract class ApplicationContainer extends GenericContainer<ApplicationContaine
             hostConfig.withCpuCount(2l);
             hostConfig.withMemory(1024l * 1024 * 1024);
         });
+        withFileSystemBind("src/test/resources/application-configuration", "/etc/" + artifactId + "/");
     }
 
     public void stop() {
@@ -52,7 +69,7 @@ abstract class ApplicationContainer extends GenericContainer<ApplicationContaine
 
     protected void logFrame(final OutputFrame frame) {
         @SuppressWarnings("resource")
-        final PrintStream stream = frame.getType() == OutputType.STDOUT ? System.out : System.err;
+        final var stream = frame.getType() == OutputType.STDOUT ? System.out : System.err;
         stream.print(frame.getUtf8String());
     }
 

@@ -151,17 +151,8 @@ public class JdbcConfiguration {
         this.password = password;
     }
 
-    @Deprecated
     public int getMaximumPoolSize() {
         return maximumPoolSize;
-    }
-
-    @Deprecated
-    @Value("${database.maximumPoolSize:4}")
-    public void setMaximumPoolSize(final int maximumPoolSize) {
-        if (maximumPoolSize != JdbcConfiguration.maximumPoolSize) {
-            logger.info("Ignoring requested maximumPoolSize: {}", maximumPoolSize);
-        }
     }
 
     public int getDefaultFetchSize() {
