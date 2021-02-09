@@ -24,6 +24,8 @@ common components:
   * PostgreSQL Driver
 * PostgreSQL
 * Resilience4J
+  * Retries JDBC `Connection` acquisition with an exponential random backoff
+    strategy
 
 In addition, both the blocking and reactive implementations use Netty.
 

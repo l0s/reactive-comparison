@@ -21,6 +21,7 @@ import static repository.Direction.AFTER;
 import static repository.Direction.BEFORE;
 
 import java.nio.charset.Charset;
+import java.nio.charset.StandardCharsets;
 import java.time.Clock;
 import java.time.OffsetDateTime;
 import java.util.Base64;
@@ -45,7 +46,6 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
-import domain.Conversation;
 import domain.Message;
 import dto.ConversationDto;
 import dto.ConversationListDto;
@@ -53,7 +53,6 @@ import dto.MessageListDto;
 import reactive.repository.ConversationRepository;
 import reactive.repository.UserRepository;
 import reactor.core.publisher.Mono;
-import reactor.core.publisher.SynchronousSink;
 import repository.ConversationCursor;
 import repository.Direction;
 
@@ -63,7 +62,7 @@ public class ConversationsController {
 
     private static final Encoder encoder = Base64.getUrlEncoder();
     private static final Decoder decoder = Base64.getUrlDecoder();
-    private static final Charset charset = Charset.forName("UTF-8");
+    private static final Charset charset = StandardCharsets.UTF_8;
 
     private final Logger logger = LoggerFactory.getLogger(getClass());
 
@@ -106,35 +105,33 @@ public class ConversationsController {
             return getConversations(userId, 16, cursor);
         }
         return getUserRepository().findById(UUID.fromString(userId))
-            .flatMap(user -> {
-                return getRepository().findConversations(Mono.just(user), limit, cursorObject).collectList()
-                    .map(conversations -> {
-                        final var dtos = conversations.stream().map(conversation -> {
-                            final var id = conversation.getId().toString();
-                            final var dto = new ConversationDto();
-                            dto.setId(id);
-                            dto.add(linkTo(methodOn(getClass()).getConversation(id)).withSelfRel().toMono()
-                                    .toFuture().join());
-                            return dto;
-                        }).collect(Collectors.toList());
-                        final var listDto = new ConversationListDto();
-                        listDto.setConversations(dtos);
-                        if (conversations.size() > 0) {
-                            final var first = conversations.get(0);
-                            final var last = conversations.get(conversations.size() - 1);
-                            listDto.add(
-                                    linkTo(methodOn(UserController.class).getConversations(userId, limit,
-                                            encode(new ConversationCursor(BEFORE, first.getId()))))
-                                                    .withRel("previous").toMono().toFuture().join(),
-                                    linkTo(methodOn(UserController.class).getConversations(userId, limit,
-                                            encode(new ConversationCursor(AFTER, last.getId()))))
-                                                    .withRel("next").toMono().toFuture().join());
-                        }
+            .flatMap(user -> getRepository().findConversations(Mono.just(user), limit, cursorObject).collectList()
+                .map(conversations -> {
+                    final var dtos = conversations.stream().map(conversation -> {
+                        final var id = conversation.getId().toString();
+                        final var dto = new ConversationDto();
+                        dto.setId(id);
+                        dto.add(linkTo(methodOn(getClass()).getConversation(id)).withSelfRel().toMono()
+                                .toFuture().join());
+                        return dto;
+                    }).collect(Collectors.toList());
+                    final var listDto = new ConversationListDto();
+                    listDto.setConversations(dtos);
+                    if (conversations.size() > 0) {
+                        final var first = conversations.get(0);
+                        final var last = conversations.get(conversations.size() - 1);
+                        listDto.add(
+                                linkTo(methodOn(UserController.class).getConversations(userId, limit,
+                                        encode(new ConversationCursor(BEFORE, first.getId()))))
+                                                .withRel("previous").toMono().toFuture().join(),
+                                linkTo(methodOn(UserController.class).getConversations(userId, limit,
+                                        encode(new ConversationCursor(AFTER, last.getId()))))
+                                                .withRel("next").toMono().toFuture().join());
+                    }
 
-                        return ResponseEntity.ok(listDto);
-                    });
-            })
-            .switchIfEmpty(Mono.just(ResponseEntity.status(HttpStatus.NOT_FOUND).body((ConversationListDto) null)));
+                    return ResponseEntity.ok(listDto);
+                }))
+            .switchIfEmpty(Mono.just(ResponseEntity.status(HttpStatus.NOT_FOUND).body(null)));
     }
 
     @GetMapping("/{conversationId}/messages/{id}")
@@ -158,35 +155,31 @@ public class ConversationsController {
             return Mono.just(ResponseEntity.badRequest().build());
         }
 
-        final var emptyHandler = Mono.fromSupplier(() -> {
-            return ResponseEntity.status(HttpStatus.NOT_FOUND).body((MessageListDto) null);
-        });
-        return getRepository().findConversation(UUID.fromString(conversationId)).flatMap(conversation -> {
-            return getRepository().findMessages(Mono.just(conversation), limit, messageIndex)
-                    .collectList()
-                    .map(messages -> {
-                        final var dto = new MessageListDto();
-                        dto.setMessages(messages);
-                        // add links
-                        final var links = new LinkedBlockingQueue<WebFluxLink>();
-                        if (!messages.isEmpty()) {
-                            final var first = messages.get(0);
-                            if (first.getId() > Integer.MIN_VALUE) {
-                                // there *may* be a previous page
-                                links.add(linkTo(methodOn(ConversationsController.class).getMessages(conversationId, limit,
-                                        createCursor(first.getId() - 1))).withRel("previous"));
-                            }
-                        }
-                        if (messageIndex >= conversation.getNextMessageId()) {
+        final var emptyHandler = Mono.just(ResponseEntity.status(HttpStatus.NOT_FOUND).body((MessageListDto) null));
+        return getRepository().findConversation(UUID.fromString(conversationId)).flatMap(conversation -> getRepository().findMessages(Mono.just(conversation), limit, messageIndex)
+                .collectList()
+                .map(messages -> {
+                    final var dto = new MessageListDto();
+                    dto.setMessages(messages);
+                    // add links
+                    final var links = new LinkedBlockingQueue<WebFluxLink>();
+                    if (!messages.isEmpty()) {
+                        final var first = messages.get(0);
+                        if (first.getId() > Integer.MIN_VALUE) {
+                            // there *may* be a previous page
                             links.add(linkTo(methodOn(ConversationsController.class).getMessages(conversationId, limit,
-                                    createCursor(messageIndex + limit))).withRel("next"));
+                                    createCursor(first.getId() - 1))).withRel("previous"));
                         }
-                        links.add(linkTo(methodOn(getClass()).getConversation(conversationId)).withRel("conversation"));
-                        links.stream().map(WebFluxLink::toMono).map(Mono::toFuture).map(CompletableFuture::join).forEach(dto::add);
+                    }
+                    if (messageIndex >= conversation.getNextMessageId()) {
+                        links.add(linkTo(methodOn(ConversationsController.class).getMessages(conversationId, limit,
+                                createCursor(messageIndex + limit))).withRel("next"));
+                    }
+                    links.add(linkTo(methodOn(getClass()).getConversation(conversationId)).withRel("conversation"));
+                    links.stream().map(WebFluxLink::toMono).map(Mono::toFuture).map(CompletableFuture::join).forEach(dto::add);
 
-                        return ResponseEntity.ok(dto);
-                     });
-        })
+                    return ResponseEntity.ok(dto);
+                 }))
         .switchIfEmpty(emptyHandler);
     }
 
@@ -201,18 +194,14 @@ public class ConversationsController {
         });
 
         return getRepository().createMessage(conversation, message)
-        .flatMap(m -> {
-            return linkTo(
-                    methodOn(getClass()).getMessage(m.getConversationId().toString(), m.getId()))
-                            .withRel("self").toMono();
-        })
+        .flatMap(m -> linkTo(
+                methodOn(getClass()).getMessage(m.getConversationId().toString(), m.getId()))
+                        .withRel("self").toMono())
         .map(link -> {
             final var locationUri = link.toUri();
             return ResponseEntity.status(HttpStatus.CREATED).header("Location", locationUri.toString());
         })
-        .switchIfEmpty(Mono.fromSupplier(() -> {
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR);
-        }))
+        .switchIfEmpty(Mono.fromSupplier(() -> ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)))
         .map(BodyBuilder::build);
     }
 
@@ -221,19 +210,7 @@ public class ConversationsController {
         final var recipient = getUserRepository().findById(UUID.fromString(recipientId));
         final var message = getRepository().findMessage(sender, recipient, id);
         return message.map(ResponseEntity::ok)
-                .switchIfEmpty(Mono.just(ResponseEntity.status(HttpStatus.NOT_FOUND).body((Message)null)));
-    }
-
-    protected void emitDto(final Conversation conversation, final SynchronousSink<ConversationDto> sink) {
-        final var dto = new ConversationDto();
-        dto.setId(conversation.getId().toString());
-        final var webfluxLink =
-                linkTo(methodOn(getClass()).getMessages(conversation.getId().toString(), null, null))
-                .withRel("messages");
-        webfluxLink.toMono().doOnSuccess(link -> {
-            dto.add(link);
-            sink.next(dto);
-        });
+                .switchIfEmpty(Mono.just(ResponseEntity.status(HttpStatus.NOT_FOUND).body(null)));
     }
 
     protected String createCursor(final int messageIndex) {
@@ -260,24 +237,6 @@ public class ConversationsController {
             logger.debug("Invalid message cursor: " + cursor + ": " + nfe.getMessage(), nfe);
             return null;
         }
-    }
-
-    /*
-     * assumes that we sort conversations by ID
-     */
-    protected UUID getConversationIndex(final String cursor) {
-        if (cursor == null || cursor.isBlank()) {
-            // no cursor provided, get the lowest possible value
-            return new UUID(Long.MIN_VALUE, Long.MIN_VALUE); // not really a valid UUID
-        }
-        final var bytes = decoder.decode(cursor.strip());
-        final var string = new String(bytes, charset);
-        final var components = string.split(":", 1);
-        if (components.length != 2 || !"id".equalsIgnoreCase(components[0])) {
-            // invalid cursor syntax
-            return null;
-        }
-        return UUID.fromString(components[1]);
     }
 
     protected String encode(final ConversationCursor cursor) {

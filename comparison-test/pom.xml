@@ -28,6 +28,8 @@
   <artifactId>comparison-test</artifactId>
   <name>comparison-test</name>
   <dependencies>
+    <!-- We need to make sure the webapp implementations are built first and pushed to the local Docker repository
+         prior to running the tests. There is no code-level dependency. -->
     <dependency>
       <groupId>com.macasaet</groupId>
       <artifactId>reactive-webapp</artifactId>
@@ -80,6 +82,11 @@
     <dependency>
       <groupId>org.mockito</groupId>
       <artifactId>mockito-core</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>com.fasterxml.jackson.core</groupId>
+      <artifactId>jackson-databind</artifactId>
       <scope>test</scope>
     </dependency>
   </dependencies>

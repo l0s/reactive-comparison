@@ -20,7 +20,7 @@ import org.testcontainers.containers.PostgreSQLContainer;
 
 class DatabaseContainer extends PostgreSQLContainer<DatabaseContainer> {
     public DatabaseContainer(final Network network) {
-        super("postgres:12.2");
+        super("postgres:13.1");
         withDatabaseName("db");
         withUsername("username");
         withPassword("password");

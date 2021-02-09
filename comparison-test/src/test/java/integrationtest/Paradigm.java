@@ -37,7 +37,7 @@ enum Paradigm {
 
     private final String artifactId;
 
-    private Paradigm(final String artifactId) {
+    Paradigm(final String artifactId) {
         Objects.requireNonNull(artifactId);
         this.artifactId = artifactId;
     }

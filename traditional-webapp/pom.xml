@@ -28,10 +28,7 @@
 
   <artifactId>traditional-webapp</artifactId>
 
-  <name>traditional-webapp</name>
-
-  <properties>
-  </properties>
+  <name>Blocking Web Application</name>
 
   <dependencies>
     <dependency>

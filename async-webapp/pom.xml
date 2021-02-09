@@ -28,10 +28,7 @@
 
   <artifactId>async-webapp</artifactId>
 
-  <name>async-webapp</name>
-
-  <properties>
-  </properties>
+  <name>Async Servlet Web Application</name>
 
   <dependencies>
     <dependency>

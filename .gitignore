@@ -5,3 +5,5 @@
 **/test-output
 .Rproj.user
 comparison-test/Rplots.pdf
+.idea
+**/*.iml

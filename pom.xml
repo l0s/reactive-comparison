@@ -21,7 +21,7 @@
   <parent>
     <groupId>org.springframework.boot</groupId>
     <artifactId>spring-boot-starter-parent</artifactId>
-    <version>2.3.5.RELEASE</version>
+    <version>2.3.8.RELEASE</version>
     <relativePath/>
     <!-- lookup parent from repository -->
   </parent>
@@ -65,7 +65,7 @@
       <dependency>
           <groupId>io.github.resilience4j</groupId>
           <artifactId>resilience4j-bom</artifactId>
-          <version>1.6.1</version>
+          <version>1.7.0</version>
           <type>pom</type>
           <scope>import</scope>
       </dependency>
@@ -125,16 +125,6 @@
         <plugin>
           <groupId>org.springframework.boot</groupId>
           <artifactId>spring-boot-maven-plugin</artifactId>
-          <executions>
-            <execution>
-              <!-- Allow this application to be used as a dependency:
-                   https://stackoverflow.com/questions/40089443/how-to-add-a-dependency-to-a-spring-boot-jar-in-another-project -->
-              <id>repackage</id>
-              <configuration>
-                <classifier>exec</classifier>
-              </configuration>
-            </execution>
-          </executions>
           <configuration>
             <!-- Force use of properties launcher in order to load external classpath through -Dloader.path=
                  https://stackoverflow.com/a/53848364
@@ -171,7 +161,7 @@
                     <inline>
                       <files>
                         <file>
-                          <source>target/${project.artifactId}-${project.version}-exec.jar</source>
+                          <source>target/${project.artifactId}-${project.version}.jar</source>
                           <outputDirectory>.</outputDirectory>
                         </file>
                       </files>
@@ -182,7 +172,7 @@
                     <!-- Add configuration directory to classpath -->
                     <arg>-Dloader.path=/etc/${project.artifactId}/</arg>
                     <arg>-jar</arg>
-                    <arg>/usr/lib/${project.artifactId}/${project.artifactId}-${project.version}-exec.jar</arg>
+                    <arg>/usr/lib/${project.artifactId}/${project.artifactId}-${project.version}.jar</arg>
                     <arg>--spring.config.location=/etc/${project.artifactId}/</arg>
                   </entryPoint>
                 </build>
@@ -211,7 +201,7 @@
               </image>
               <image>
                 <alias>database</alias>
-                <name>postgres:12.2</name>
+                <name>postgres:13.1</name>
                 <run>
                   <containerNamePattern>%a-%t-%i</containerNamePattern>
                   <env>

@@ -19,7 +19,6 @@ import java.sql.Connection;
 import java.sql.SQLException;
 import java.sql.SQLTransientConnectionException;
 import java.time.Duration;
-import java.util.function.Supplier;
 
 import javax.sql.DataSource;
 
@@ -81,7 +80,7 @@ public class JdbcConfiguration {
         final Retry retry = retryRegistry.retry("jdbc.DataSource.getConnection");
         return new HikariDataSource(config) {
             public Connection getConnection() throws SQLException {
-                final var either = retry.executeEitherSupplier((Supplier<Either<SQLException, Connection>>) () -> {
+                final var either = retry.executeEitherSupplier(() -> {
                     try {
                         return Either.right(super.getConnection());
                     } catch (final SQLException se) {
@@ -96,7 +95,7 @@ public class JdbcConfiguration {
             }
 
             public Connection getConnection(String username, String password) throws SQLException {
-                final var either = retry.executeEitherSupplier((Supplier<Either<SQLException, Connection>>) () -> {
+                final var either = retry.executeEitherSupplier(() -> {
                     try {
                         return Either.right(super.getConnection(username, password));
                     } catch (final SQLException se) {

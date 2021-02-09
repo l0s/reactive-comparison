@@ -67,7 +67,7 @@ public class UserRepository {
     }
 
     public Mono<User> findById(final UUID id) {
-        final Mono<User> mono = Mono.create(sink -> {
+        return Mono.create(sink -> {
             try {
                 try (var connection = getDataSource().getConnection()) {
                     try (var statement = connection.prepareStatement(selectByIdTemplate, ResultSet.TYPE_FORWARD_ONLY,
@@ -96,12 +96,11 @@ public class UserRepository {
                 sink.error(e);
             }
         });
-        return mono;
     }
 
     public Flux<User> findAll(final int pageNumber, final int pageSize) {
         final var offset = pageSize * pageNumber;
-        final Flux<User> flux = Flux.create(sink -> {
+        return Flux.create(sink -> {
             try (var connection = getDataSource().getConnection()) {
                 try (var statement = connection.prepareStatement(selectAllTemplate, ResultSet.TYPE_FORWARD_ONLY,
                         ResultSet.CONCUR_READ_ONLY)) {
@@ -122,7 +121,6 @@ public class UserRepository {
                 sink.error(se);
             }
         });
-        return flux;
     }
 
     protected DataSource getDataSource() {

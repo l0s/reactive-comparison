@@ -27,7 +27,7 @@
     <version>0.0.0-SNAPSHOT</version>
   </parent>
   <artifactId>reactive-webapp</artifactId>
-  <name>reactive-webapp</name>
+  <name>Reactive Web Application</name>
   <dependencies>
     <dependency>
       <groupId>org.springframework.boot</groupId>

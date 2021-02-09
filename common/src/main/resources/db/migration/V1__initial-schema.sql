@@ -34,7 +34,7 @@ CREATE TABLE IF NOT EXISTS Conversation_Participant(
 CREATE TABLE IF NOT EXISTS Message(
     ts TIMESTAMP NOT NULL,
     from_id UUID NOT NULL,
-    body VARCHAR( 8192 ) NOT NULL,
+    body VARCHAR( 16384 ) NOT NULL,
     conversation_id UUID NOT NULL,
     id INTEGER NOT NULL,
     FOREIGN KEY( from_id ) REFERENCES "User"( id ) ON DELETE CASCADE,
